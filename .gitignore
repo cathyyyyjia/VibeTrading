@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# FastAPI/uvicorn
+*.log
+
+# Local environment / secrets
+.env
+**/.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Databases / local artifacts
+*.db
+*.sqlite
+*.sqlite3
+backend/dev.db
+backend/*.db
+backend/*.sqlite3
+
+# Node / frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.pnpm-store/
+.cache/
+coverage/
+.next/
+.nuxt/
+.vite/
+**/.vite/
+
+# Vite env
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/

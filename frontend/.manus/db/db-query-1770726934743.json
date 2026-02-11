@@ -1,0 +1,22 @@
+{
+  "query": "SELECT runId, state, progress, LEFT(prompt, 80) as prompt_preview FROM backtest_runs ORDER BY createdAt DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 46MR8iSUZJVVkeV.e55c0df59259 --database bRtfUVP29ErVg79Z5CQWnH --execute SELECT runId, state, progress, LEFT(prompt, 80) as prompt_preview FROM backtest_runs ORDER BY createdAt DESC LIMIT 5;",
+  "rows": [
+    {
+      "runId": "Tiqlqa6j",
+      "state": "completed",
+      "progress": "100",
+      "prompt_preview": "Buy BTC when the 50-day MA crosses above the 200-day MA, with RSI below 30 as an"
+    },
+    {
+      "runId": "C9j8zx6v",
+      "state": "running",
+      "progress": "0",
+      "prompt_preview": "Buy BTC when the 50-day MA crosses above the 200-day MA, with RSI below 30 as an"
+    }
+  ],
+  "messages": [],
+  "stdout": "runId\tstate\tprogress\tprompt_preview\nTiqlqa6j\tcompleted\t100\tBuy BTC when the 50-day MA crosses above the 200-day MA, with RSI below 30 as an\nC9j8zx6v\trunning\t0\tBuy BTC when the 50-day MA crosses above the 200-day MA, with RSI below 30 as an\n",
+  "stderr": "",
+  "execution_time_ms": 1493
+}
