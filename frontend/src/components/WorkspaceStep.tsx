@@ -61,6 +61,8 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
   const isRunning = step.status === 'running';
   const isDone = step.status === 'done';
   const displayProgress = isDone ? 100 : progress;
+  const latestProgressLog = [...step.logs].reverse().find((log) => log.includes('Backtesting '));
+  const progressMatch = latestProgressLog?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
 
   return (
     <div className="mt-2.5 space-y-2.5">
@@ -76,6 +78,11 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
           />
         </div>
       </div>
+      {progressMatch && (
+        <div className="text-xs text-muted-foreground">
+          Current date: {progressMatch[1]} ({progressMatch[2]}/{progressMatch[3]})
+        </div>
+      )}
 
       <div className="space-y-1.5">
         {step.logs.map((log, i) => {

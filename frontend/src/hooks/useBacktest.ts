@@ -81,6 +81,14 @@ export function useBacktest(): UseBacktestReturn {
           setStatus("running");
           const runningStep = statusData.steps.find((s) => s.status === "running");
           if (runningStep) {
+            if (runningStep.key === "backtest") {
+              const latestLog = runningStep.logs[runningStep.logs.length - 1] || "";
+              const m = latestLog.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
+              if (m) {
+                setStatusMessage(`Backtesting ${m[1]} (${m[2]}/${m[3]}, ${m[4]}%)`);
+                return;
+              }
+            }
             const stepMessages: Record<string, string> = {
               parse: "Parsing strategy spec...",
               plan: "Compiling execution plan...",

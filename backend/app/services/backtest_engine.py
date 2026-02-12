@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -62,6 +63,7 @@ async def run_backtest_from_spec(
   strategy_spec: dict[str, Any],
   start_date: str,
   end_date: str,
+  progress_hook: Callable[[int, int, datetime], Awaitable[None]] | None = None,
 ) -> BacktestResult:
   if strategy_spec.get("timezone") != "America/New_York":
     raise AppError("VALIDATION_ERROR", "timezone must be America/New_York", {"timezone": strategy_spec.get("timezone")})
@@ -100,7 +102,7 @@ async def run_backtest_from_spec(
   daily_trade_close: list[float] = []
   daily_close_ts: list[datetime] = []
 
-  for session in sessions:
+  for session_idx, session in enumerate(sessions, start=1):
     session_open = cal.session_open(session).to_pydatetime().replace(tzinfo=timezone.utc)
     session_close = cal.session_close(session).to_pydatetime().replace(tzinfo=timezone.utc)
     decision_ts = session_close - timedelta(minutes=2)
@@ -126,6 +128,11 @@ async def run_backtest_from_spec(
           "errors": load_errors[-5:],
         }
       )
+      if progress_hook:
+        try:
+          await progress_hook(session_idx, total_sessions, session_close)
+        except Exception:
+          pass
       continue
 
     if chosen_signal != resolved_signal_symbol:
@@ -143,6 +150,11 @@ async def run_backtest_from_spec(
           "errors": [str(e)],
         }
       )
+      if progress_hook:
+        try:
+          await progress_hook(session_idx, total_sessions, session_close)
+        except Exception:
+          pass
       continue
 
     decision_bar_signal = _last_bar_at_or_before(bars_signal, decision_ts)
@@ -157,6 +169,11 @@ async def run_backtest_from_spec(
           "session_close": session_close.isoformat(),
         }
       )
+      if progress_hook:
+        try:
+          await progress_hook(session_idx, total_sessions, session_close)
+        except Exception:
+          pass
       continue
 
     daily_signal_close.append(float(close_bar_signal.c))
@@ -180,6 +197,11 @@ async def run_backtest_from_spec(
         "close_price_trade": float(close_bar_trade.c),
       }
     )
+    if progress_hook:
+      try:
+        await progress_hook(session_idx, total_sessions, session_close)
+      except Exception:
+        pass
 
   macd_line, macd_sig = _macd(four_h_closes, 12, 26, 9)
   cross_down = [_cross_down(macd_line, macd_sig, i) for i in range(len(four_h_closes))]

@@ -158,8 +158,29 @@ async def execute_run(
       await _set_step_state(db, run_id, "data", "RUNNING", _log("INFO", "Fetching minute data"))
       await _set_step_state(db, run_id, "data", "DONE", _log("INFO", "Data ready", {"start_date": start_date, "end_date": end_date}))
 
-      await _set_step_state(db, run_id, "backtest", "RUNNING", _log("INFO", "Running backtest"))
-      result = await run_backtest_from_spec(spec, start_date=start_date, end_date=end_date)
+      await _set_step_state(db, run_id, "backtest", "RUNNING", _log("INFO", "Running backtest", {"start_date": start_date, "end_date": end_date}))
+      backtest_step = (await db.execute(select(RunStep).where(RunStep.run_id == run_id, RunStep.step_id == "backtest"))).scalar_one()
+
+      async def _on_backtest_progress(done: int, total: int, session_close: datetime) -> None:
+        if total <= 0:
+          return
+        progress_start = 50
+        progress_end = 90
+        ratio = min(max(done / total, 0.0), 1.0)
+        target = progress_start + int((progress_end - progress_start) * ratio)
+        run.progress = max(run.progress, target)
+
+        if done == 1 or done == total or done % 5 == 0:
+          pct = round(ratio * 100.0, 1)
+          progress_log = _log(
+            "INFO",
+            "Backtest progress",
+            {"session_date": session_close.date().isoformat(), "processed": done, "total": total, "pct": pct},
+          )
+          backtest_step.logs = [*(backtest_step.logs or [])[-80:], progress_log]
+        await db.commit()
+
+      result = await run_backtest_from_spec(spec, start_date=start_date, end_date=end_date, progress_hook=_on_backtest_progress)
       resolved = (result.artifacts or {}).get("resolved") if isinstance(result.artifacts, dict) else {}
       universe = (resolved or {}).get("universe") if isinstance(resolved, dict) else {}
       await _set_step_state(

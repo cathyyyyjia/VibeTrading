@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
@@ -20,14 +21,18 @@ _db_url = _normalize_async_database_url(settings.database_url)
 _parsed = urlparse(_db_url)
 _host = (_parsed.hostname or "").lower()
 _port = _parsed.port or 0
+_is_supabase_pooler = _host.endswith(".pooler.supabase.com") or _port in (6543, 6432)
 _connect_args: dict[str, object] = {}
-if _host.endswith(".pooler.supabase.com") or _port in (6543, 6432):
+_engine_kwargs: dict[str, object] = {"pool_pre_ping": True, "connect_args": _connect_args}
+if _is_supabase_pooler:
   # Supabase pooler uses PgBouncer transaction pooling; prepared statements
   # can break across transactions unless both caches are disabled.
   _connect_args["statement_cache_size"] = 0
   _connect_args["prepared_statement_cache_size"] = 0
+  # Avoid long-lived client-side pooled connections on top of PgBouncer.
+  _engine_kwargs["poolclass"] = NullPool
 
-engine: AsyncEngine = create_async_engine(_db_url, pool_pre_ping=True, connect_args=_connect_args)
+engine: AsyncEngine = create_async_engine(_db_url, **_engine_kwargs)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 

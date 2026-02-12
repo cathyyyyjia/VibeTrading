@@ -248,6 +248,16 @@ type V0BacktestReportResponse = {
 
 function formatStepLog(entry: V0LogEntry): string {
   const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : '';
+  if (entry.msg === 'Backtest progress' && entry.kv) {
+    const sessionDate = typeof entry.kv.session_date === 'string' ? entry.kv.session_date : '';
+    const processed = typeof entry.kv.processed === 'number' ? entry.kv.processed : undefined;
+    const total = typeof entry.kv.total === 'number' ? entry.kv.total : undefined;
+    const pct = typeof entry.kv.pct === 'number' ? entry.kv.pct : undefined;
+    const prefix = ts ? `${ts} ` : '';
+    if (sessionDate && processed !== undefined && total !== undefined && pct !== undefined) {
+      return `${prefix}[${entry.level}] Backtesting ${sessionDate} (${processed}/${total}, ${pct}%)`;
+    }
+  }
   const kv = entry.kv && Object.keys(entry.kv).length > 0 ? ` ${JSON.stringify(entry.kv)}` : '';
   const prefix = ts ? `${ts} ` : '';
   return `${prefix}[${entry.level}] ${entry.msg}${kv}`;
