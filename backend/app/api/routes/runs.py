@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, error_response
+from app.core.config import settings
 from app.core.auth import get_auth_claims
 from app.db.engine import get_db
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
@@ -27,6 +28,7 @@ from app.schemas.contracts import (
   WorkspaceStep,
 )
 from app.services.run_service import create_run, execute_run
+from app.services.task_queue import enqueue_run_job_async
 from app.services.user_service import ensure_user_from_claims
 
 
@@ -43,7 +45,15 @@ async def post_run(
   provider, payload = claims
   user = await ensure_user_from_claims(db, provider, payload)
   run = await create_run(db, req, user_id=user.id)
-  background_tasks.add_task(execute_run, run.id, req.start_date.isoformat(), req.end_date.isoformat())
+
+  if settings.task_queue_enabled:
+    enqueued = await enqueue_run_job_async(run.id, req.start_date.isoformat(), req.end_date.isoformat())
+    if enqueued is None:
+      # De-duplicated by queue lock; still return accepted for idempotent client behavior.
+      pass
+  else:
+    background_tasks.add_task(execute_run, run.id, req.start_date.isoformat(), req.end_date.isoformat())
+
   return CreateRunResponse(
     run_id=str(run.id),
     message=f"Backtest run created. Poll /api/runs/{run.id}/status for progress.",

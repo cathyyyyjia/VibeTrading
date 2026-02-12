@@ -13,6 +13,10 @@ class Settings(BaseSettings):
 
   database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/vibetrading"
   redis_url: str = "redis://localhost:6379/0"
+  task_queue_enabled: bool = False
+  task_queue_name: str = "vibe-runs"
+  task_queue_job_timeout_seconds: int = 7200
+  task_queue_recovery_lookback_hours: int = 24
 
   supabase_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_SECRET_KEY"))
   supabase_project_url: str | None = None

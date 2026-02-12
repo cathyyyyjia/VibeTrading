@@ -23,7 +23,6 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
   const { t } = useI18n();
 
   const isIdle = status === 'idle';
-  const isAnalyzing = status === 'analyzing';
 
   return (
     <div className="h-full flex flex-col bg-muted/30">
@@ -55,16 +54,6 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
             <h3 className="text-sm font-medium text-foreground mb-1.5">{t('workspace.readyTitle')}</h3>
             <p className="text-xs text-muted-foreground leading-relaxed max-w-[240px]">
               {t('workspace.readySubtitle')}
-            </p>
-          </div>
-        ) : isAnalyzing && steps.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center px-6">
-            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 animate-pulse">
-              <Sparkles className="w-5 h-5 text-amber-500" />
-            </div>
-            <h3 className="text-sm font-medium text-foreground mb-1.5">Analyzing Strategy</h3>
-            <p className="text-xs text-muted-foreground leading-relaxed max-w-[240px]">
-              Parsing natural language into five-layer DSL structure...
             </p>
           </div>
         ) : (

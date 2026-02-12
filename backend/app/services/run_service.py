@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi.encoders import jsonable_encoder
+import redis.asyncio as redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,23 @@ def _now() -> datetime:
 
 def _log(level: Literal["DEBUG", "INFO", "WARN", "ERROR"], msg: str, kv: dict[str, Any] | None = None) -> dict[str, Any]:
   return {"ts": _now().isoformat(), "level": level, "msg": msg, "kv": kv or {}}
+
+
+def _queue_dedupe_key(run_id: uuid.UUID) -> str:
+  return f"vibe:run:queued:{run_id}"
+
+
+async def _clear_queue_lock(run_id: uuid.UUID) -> None:
+  if not settings.task_queue_enabled:
+    return
+  if not settings.redis_url:
+    return
+  try:
+    client = redis.from_url(settings.redis_url, decode_responses=True)
+    await client.delete(_queue_dedupe_key(run_id))
+    await client.aclose()
+  except Exception:
+    logger.exception("run_queue_lock_clear_failed", extra={"run_id": str(run_id)})
 
 
 async def _set_step_state(db: AsyncSession, run_id: uuid.UUID, step_id: StepId, state: str, log: dict[str, Any] | None = None) -> None:
@@ -98,6 +116,19 @@ async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, u
       state = "SKIPPED"
     steps.append(RunStep(run_id=run.id, step_id=sid, label=STEP_LABELS[sid], state=state, logs=[]))  # type: ignore[arg-type]
   db.add_all(steps)
+  db.add(
+    RunArtifact(
+      run_id=run.id,
+      name="request.json",
+      type="json",
+      uri=f"/api/runs/{run.id}/artifacts/request.json",
+      content={
+        "start_date": req.start_date.isoformat(),
+        "end_date": req.end_date.isoformat(),
+        "mode": req.mode,
+      },
+    )
+  )
   await db.commit()
 
   return run
@@ -286,3 +317,5 @@ async def execute_run(
       run.progress = 100
       run.error = {"code": "INTERNAL", "message": "Unhandled error", "details": {"error": str(e)}}
       await db.commit()
+    finally:
+      await _clear_queue_lock(run_id)

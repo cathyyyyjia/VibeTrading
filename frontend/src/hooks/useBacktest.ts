@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as api from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { RunStatusResponse, RunReportResponse, StepInfo, AnalyzeResponse } from "@/lib/api";
+import type { RunStatusResponse, RunReportResponse, StepInfo } from "@/lib/api";
 
 export type AppStatus = "idle" | "analyzing" | "running" | "completed" | "failed";
 
@@ -21,7 +21,6 @@ export interface UseBacktestReturn {
   progress: number;
   artifacts: RunStatusResponse["artifacts"] | null;
   report: RunReportResponse | null;
-  analyzeResult: AnalyzeResponse | null;
   error: string | null;
   statusMessage: string;
   setPrompt: (v: string) => void;
@@ -35,6 +34,17 @@ export interface UseBacktestReturn {
 const POLL_INTERVAL_FAST = 1500;
 const POLL_INTERVAL_BACKTEST = 3000;
 const POLL_INTERVAL_MAX = 8000;
+
+function buildInitialWorkspaceSteps(): StepInfo[] {
+  return [
+    { key: "parse", title: "Parse Strategy", status: "running", durationMs: null, logs: [] },
+    { key: "plan", title: "Build Execution Plan", status: "queued", durationMs: null, logs: [] },
+    { key: "data", title: "Fetch & Validate Data", status: "queued", durationMs: null, logs: [] },
+    { key: "backtest", title: "Backtest Engine", status: "queued", durationMs: null, logs: [] },
+    { key: "report", title: "Generate Report", status: "queued", durationMs: null, logs: [] },
+    { key: "deploy", title: "Deploy", status: "queued", durationMs: null, logs: [] },
+  ];
+}
 
 export function useBacktest(): UseBacktestReturn {
   const [status, setStatus] = useState<AppStatus>("idle");
@@ -50,7 +60,6 @@ export function useBacktest(): UseBacktestReturn {
   const [progress, setProgress] = useState(0);
   const [artifacts, setArtifacts] = useState<RunStatusResponse["artifacts"] | null>(null);
   const [report, setReport] = useState<RunReportResponse | null>(null);
-  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
 
@@ -196,10 +205,9 @@ export function useBacktest(): UseBacktestReturn {
     setError(null);
     setReport(null);
     setArtifacts(null);
-    setAnalyzeResult(null);
-    setSteps([]);
+    setSteps(buildInitialWorkspaceSteps());
     setProgress(0);
-    setStatusMessage("Analyzing strategy...");
+    setStatusMessage("Waiting for run to start...");
 
     try {
       const options: Record<string, unknown> = {};
@@ -211,6 +219,7 @@ export function useBacktest(): UseBacktestReturn {
       setStatus("running");
       setRunId(newRunId);
       setStrategyId(null);
+      setStatusMessage("Run created. Initializing parser...");
       currentRunIdRef.current = newRunId;
       startPolling(newRunId);
     } catch (e) {
@@ -231,7 +240,6 @@ export function useBacktest(): UseBacktestReturn {
     setProgress(0);
     setArtifacts(null);
     setReport(null);
-    setAnalyzeResult(null);
     setError(null);
     setStatusMessage("");
   }, [stopPolling]);
@@ -262,7 +270,6 @@ export function useBacktest(): UseBacktestReturn {
     progress,
     artifacts,
     report,
-    analyzeResult,
     error,
     statusMessage,
     setPrompt,
