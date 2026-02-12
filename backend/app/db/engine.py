@@ -22,7 +22,10 @@ _host = (_parsed.hostname or "").lower()
 _port = _parsed.port or 0
 _connect_args: dict[str, object] = {}
 if _host.endswith(".pooler.supabase.com") or _port in (6543, 6432):
+  # Supabase pooler uses PgBouncer transaction pooling; prepared statements
+  # can break across transactions unless both caches are disabled.
   _connect_args["statement_cache_size"] = 0
+  _connect_args["prepared_statement_cache_size"] = 0
 
 engine: AsyncEngine = create_async_engine(_db_url, pool_pre_ping=True, connect_args=_connect_args)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
