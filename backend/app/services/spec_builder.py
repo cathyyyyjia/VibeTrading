@@ -49,8 +49,6 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
   "type": "object",
   "additionalProperties": True,
   "required": [
-    "strategy_id",
-    "strategy_version",
     "name",
     "timezone",
     "calendar",
@@ -62,50 +60,484 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     "meta",
   ],
   "properties": {
-    "strategy_id": {"type": "string"},
-    "strategy_version": {"type": "string"},
-    "name": {"type": "string"},
-    "timezone": {"type": "string"},
-    "calendar": {"type": "object", "additionalProperties": True},
-    "universe": {"type": "object", "additionalProperties": True},
-    "decision": {"type": "object", "additionalProperties": True},
-    "execution": {"type": "object", "additionalProperties": True},
-    "risk": {"type": "object", "additionalProperties": True},
-    "dsl": {
+    "name": {"type": "string", "minLength": 1},
+    "timezone": {"type": "string", "const": "America/New_York"},
+    "calendar": {
       "type": "object",
+      "required": ["type", "value"],
       "additionalProperties": True,
-      "required": ["atomic", "time", "signal", "logic", "action"],
       "properties": {
-        "atomic": {"type": "object", "additionalProperties": True},
-        "time": {"type": "object", "additionalProperties": True},
-        "signal": {
-          "type": "object",
-          "additionalProperties": True,
-          "required": ["indicators", "events"],
-          "properties": {
-            "indicators": {"type": "array"},
-            "events": {"type": "array"},
-          },
+        "type": {"type": "string", "const": "exchange"},
+        "value": {"type": "string", "const": "XNYS"},
+      },
+    },
+    "universe": {
+      "type": "object",
+      "required": ["signal_symbol", "trade_symbol"],
+      "additionalProperties": True,
+      "properties": {
+        "signal_symbol": {"type": "string", "minLength": 1},
+        "signal_symbol_fallbacks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
         },
-        "logic": {
+        "trade_symbol": {"type": "string", "minLength": 1},
+      },
+    },
+    "decision": {
+      "type": "object",
+      "required": ["decision_time_rule"],
+      "additionalProperties": True,
+      "properties": {
+        "decision_time_rule": {
           "type": "object",
+          "required": ["type", "offset"],
           "additionalProperties": True,
-          "required": ["rules"],
           "properties": {
-            "rules": {"type": "array"},
-          },
-        },
-        "action": {
-          "type": "object",
-          "additionalProperties": True,
-          "required": ["actions"],
-          "properties": {
-            "actions": {"type": "array"},
+            "type": {"type": "string", "const": "MARKET_CLOSE_OFFSET"},
+            "offset": {"type": "string", "const": "-2m"},
           },
         },
       },
     },
-    "meta": {"type": "object", "additionalProperties": True},
+    "execution": {
+      "type": "object",
+      "required": ["model"],
+      "additionalProperties": True,
+      "properties": {
+        "model": {"type": "string", "enum": ["MOC"]},
+        "slippage_bps": {"type": "number", "minimum": 0},
+        "commission_per_share": {"type": "number", "minimum": 0},
+        "commission_per_trade": {"type": "number", "minimum": 0},
+      },
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": True,
+      "properties": {
+        "cooldown": {
+          "type": "object",
+          "required": ["scope", "value"],
+          "additionalProperties": True,
+          "properties": {
+            "scope": {"type": "string", "enum": ["SYMBOL_ACTION"]},
+            "value": {
+              "oneOf": [
+                {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
+                {
+                  "type": "object",
+                  "required": ["tf", "bars"],
+                  "additionalProperties": False,
+                  "properties": {
+                    "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                    "bars": {"type": "integer", "minimum": 1},
+                  },
+                },
+              ]
+            },
+          },
+        },
+        "max_orders_per_day": {"type": "integer", "minimum": 1},
+      },
+    },
+    "dsl": {
+      "type": "object",
+      "required": ["atomic", "time", "signal", "logic", "action"],
+      "additionalProperties": True,
+      "properties": {
+        "atomic": {
+          "type": "object",
+          "additionalProperties": True,
+          "properties": {
+            "symbols": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": {"type": "string", "minLength": 1},
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "ticker"],
+                    "additionalProperties": True,
+                    "properties": {
+                      "name": {"type": "string", "minLength": 1},
+                      "ticker": {"type": "string", "minLength": 1},
+                    },
+                  },
+                },
+              ]
+            },
+            "constants": {
+              "type": "object",
+              "additionalProperties": True,
+              "properties": {
+                "sell_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+                "initial_position_qty": {"type": "number", "minimum": 0},
+                "initial_cash": {"type": "number", "minimum": 0},
+                "lookback": {
+                  "oneOf": [
+                    {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
+                    {
+                      "type": "object",
+                      "required": ["tf", "bars"],
+                      "additionalProperties": False,
+                      "properties": {
+                        "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                        "bars": {"type": "integer", "minimum": 1},
+                      },
+                    },
+                  ]
+                },
+              },
+            },
+          },
+        },
+        "time": {
+          "type": "object",
+          "required": ["primary_tf", "derived_tfs"],
+          "additionalProperties": True,
+          "properties": {
+            "primary_tf": {"type": "string", "enum": ["1m"]},
+            "derived_tfs": {
+              "type": "array",
+              "items": {"type": "string", "enum": ["4h", "1d"]},
+              "minItems": 2,
+              "uniqueItems": True,
+            },
+            "aggregation": {
+              "type": "object",
+              "additionalProperties": True,
+              "properties": {
+                "4h": {
+                  "oneOf": [
+                    {"type": "string", "enum": ["SESSION_ALIGNED_4H"]},
+                    {
+                      "type": "object",
+                      "additionalProperties": True,
+                      "properties": {
+                        "source_tf": {"type": "string", "enum": ["1m"]},
+                        "bar_close_rule": {"type": "string", "enum": ["SESSION_ALIGNED_4H"]},
+                        "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
+                      },
+                    },
+                  ]
+                },
+                "1d": {
+                  "oneOf": [
+                    {"type": "string", "enum": ["SESSION_ALIGNED_1D", "EXCHANGE_DAILY"]},
+                    {
+                      "type": "object",
+                      "additionalProperties": True,
+                      "properties": {
+                        "source_tf": {"type": "string", "enum": ["1m"]},
+                        "bar_close_rule": {"type": "string", "enum": ["SESSION_ALIGNED_1D", "EXCHANGE_DAILY"]},
+                        "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
+                      },
+                    },
+                  ]
+                },
+              },
+            },
+          },
+        },
+        "signal": {
+          "type": "object",
+          "required": ["indicators", "events"],
+          "additionalProperties": True,
+          "properties": {
+            "indicators": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "symbol_ref", "tf", "type", "params", "align"],
+                "additionalProperties": True,
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "symbol_ref": {"type": "string", "minLength": 1},
+                  "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                  "type": {"type": "string", "enum": ["MACD", "SMA", "MA", "CLOSE"]},
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                      "fast": {"type": "integer", "minimum": 1},
+                      "slow": {"type": "integer", "minimum": 1},
+                      "signal": {"type": "integer", "minimum": 1},
+                      "window": {
+                        "oneOf": [
+                          {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
+                          {
+                            "type": "object",
+                            "required": ["tf", "bars"],
+                            "additionalProperties": False,
+                            "properties": {
+                              "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                              "bars": {"type": "integer", "minimum": 1},
+                            },
+                          },
+                        ]
+                      },
+                      "bar_selection": {"type": "string", "enum": ["LAST_CLOSED_1D"]},
+                    },
+                  },
+                  "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
+                },
+              },
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "type"],
+                "additionalProperties": True,
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "type": {"type": "string", "enum": ["CROSS", "CROSS_UP", "CROSS_DOWN", "THRESHOLD"]},
+                  "a": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                  "b": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                  "left": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                  "right": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                  "direction": {"type": "string", "enum": ["UP", "DOWN", "ANY"]},
+                  "op": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
+                  "operator": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
+                  "value": {"type": "number"},
+                  "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                },
+              },
+            },
+          },
+        },
+        "logic": {
+          "type": "object",
+          "required": ["rules"],
+          "additionalProperties": True,
+          "properties": {
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "when", "then"],
+                "additionalProperties": True,
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "when": {"$ref": "#/$defs/LogicCondition"},
+                  "then": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "oneOf": [
+                        {"type": "string", "minLength": 1},
+                        {
+                          "type": "object",
+                          "additionalProperties": True,
+                          "properties": {
+                            "action_id": {"type": "string", "minLength": 1},
+                            "id": {"type": "string", "minLength": 1},
+                          },
+                        },
+                      ]
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "action": {
+          "type": "object",
+          "required": ["actions"],
+          "additionalProperties": True,
+          "properties": {
+            "actions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "type", "symbol_ref", "side", "qty", "order_type"],
+                "additionalProperties": True,
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "type": {"type": "string", "enum": ["ORDER"]},
+                  "symbol_ref": {"type": "string", "minLength": 1},
+                  "side": {"type": "string", "enum": ["BUY", "SELL"]},
+                  "qty": {
+                    "type": "object",
+                    "required": ["mode", "value"],
+                    "additionalProperties": True,
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "FRACTION_OF_POSITION",
+                          "ABSOLUTE",
+                          "NOTIONAL_USD",
+                          "FIXED",
+                          "FIXED_SHARES",
+                          "SHARES",
+                          "FRACTION_OF_CASH",
+                          "FRACTION_OF_EQUITY",
+                        ],
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "FRACTION_OF_POSITION",
+                          "ABSOLUTE",
+                          "NOTIONAL_USD",
+                          "FIXED",
+                          "FIXED_SHARES",
+                          "SHARES",
+                          "FRACTION_OF_CASH",
+                          "FRACTION_OF_EQUITY",
+                        ],
+                      },
+                      "value": {"type": "number", "minimum": 0},
+                      "value_ref": {"type": "string"},
+                    },
+                  },
+                  "order_type": {"type": "string", "enum": ["MOC"]},
+                  "time_in_force": {"type": "string", "enum": ["DAY"]},
+                  "cooldown": {
+                    "oneOf": [
+                      {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
+                      {
+                        "type": "object",
+                        "required": ["tf", "bars"],
+                        "additionalProperties": False,
+                        "properties": {
+                          "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                          "bars": {"type": "integer", "minimum": 1},
+                        },
+                      },
+                    ]
+                  },
+                  "idempotency_scope": {"type": "string", "enum": ["DECISION_DAY"]},
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": True,
+      "properties": {
+        "created_at": {"type": "string", "format": "date-time"},
+        "author": {"type": "string"},
+        "notes": {"type": "string"},
+        "mode": {"type": "string", "enum": ["BACKTEST_ONLY", "PAPER", "LIVE"]},
+        "llm_used": {"type": "boolean"},
+        "fallback_seed_applied": {"type": "boolean"},
+      },
+    },
+  },
+  "$defs": {
+    "LogicCondition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["all"],
+          "additionalProperties": False,
+          "properties": {
+            "all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/LogicCondition"}},
+          },
+        },
+        {
+          "type": "object",
+          "required": ["any"],
+          "additionalProperties": False,
+          "properties": {
+            "any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/LogicCondition"}},
+          },
+        },
+        {
+          "type": "object",
+          "required": ["event_within"],
+          "additionalProperties": False,
+          "properties": {
+            "event_within": {
+              "type": "object",
+              "required": ["event_id", "lookback"],
+              "additionalProperties": True,
+              "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "lookback": {
+                  "oneOf": [
+                    {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
+                    {
+                      "type": "object",
+                      "required": ["tf", "bars"],
+                      "additionalProperties": False,
+                      "properties": {
+                        "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                        "bars": {"type": "integer", "minimum": 1},
+                      },
+                    },
+                  ]
+                },
+              },
+            },
+          },
+        },
+        {
+          "type": "object",
+          "required": ["event_id"],
+          "additionalProperties": True,
+          "properties": {
+            "event_id": {"type": "string", "minLength": 1},
+            "scope": {"type": "string", "enum": ["LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", "BAR", ""]},
+          },
+        },
+        {
+          "type": "object",
+          "required": ["lt"],
+          "additionalProperties": False,
+          "properties": {
+            "lt": {
+              "type": "object",
+              "required": ["a", "b"],
+              "additionalProperties": False,
+              "properties": {
+                "a": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+                "b": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+              },
+            },
+          },
+        },
+        {
+          "type": "object",
+          "required": ["gt"],
+          "additionalProperties": False,
+          "properties": {
+            "gt": {
+              "type": "object",
+              "required": ["a", "b"],
+              "additionalProperties": False,
+              "properties": {
+                "a": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+                "b": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+              },
+            },
+          },
+        },
+        {
+          "type": "object",
+          "required": ["op", "left", "right"],
+          "additionalProperties": False,
+          "properties": {
+            "op": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
+            "left": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+            "right": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+          },
+        },
+      ]
+    },
   },
 }
 
@@ -284,8 +716,9 @@ The output MUST include a fully runnable five-layer DSL:
   if not isinstance(spec.get("name"), str) or not spec["name"].strip():
     spec["name"] = (nl_text[:80] + "...") if len(nl_text) > 80 else nl_text
 
-  if not isinstance(spec.get("strategy_id"), str) or not spec["strategy_id"].strip():
-    spec["strategy_id"] = f"stg_{compute_strategy_version({k: v for k, v in spec.items() if k != 'strategy_version'})[:12]}"
+  # System-managed fields: never trust/generate from LLM output directly.
+  id_basis = {k: v for k, v in spec.items() if k not in ("strategy_id", "strategy_version")}
+  spec["strategy_id"] = f"stg_{compute_strategy_version(id_basis)[:12]}"
 
   spec.setdefault("meta", {})
   if isinstance(spec["meta"], dict):
