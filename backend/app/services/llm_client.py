@@ -59,6 +59,13 @@ class LlmClient:
     timeout = httpx.Timeout(30.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
       resp = await client.post(url, headers=headers, json=payload)
+      if resp.status_code >= 400 and json_schema is not None and resp.status_code == 400:
+        # Some models/endpoints reject complex JSON Schema keywords.
+        # Fallback to json_object keeps service available while spec_validator enforces hard rules.
+        fallback_payload = dict(payload)
+        fallback_payload["response_format"] = {"type": "json_object"}
+        resp = await client.post(url, headers=headers, json=fallback_payload)
+
       if resp.status_code >= 400:
         raise AppError(
           "INTERNAL",

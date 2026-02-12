@@ -39,6 +39,12 @@ Hard Rules (Vibe Trading v0):
 Events:
 - CROSS events are edge-triggered: a MACD bearish cross is TRUE only at the bar where MACD crosses below its signal.
 - It is NOT a persistent boolean state.
+- For CROSS/CROSS_DOWN/CROSS_UP events:
+  - Use event.a and event.b as indicator field refs, e.g. "macd_4h.macd" and "macd_4h.signal".
+  - Set left/right/op/value to null.
+- For THRESHOLD events:
+  - Use event.left, event.right, and event.op.
+  - Set a/b/direction/value to null.
 
 Output instructions:
 - Output ONLY the JSON object.
@@ -47,7 +53,7 @@ Output instructions:
 
 STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
   "type": "object",
-  "additionalProperties": True,
+  "additionalProperties": False,
   "required": [
     "name",
     "timezone",
@@ -60,12 +66,12 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     "meta",
   ],
   "properties": {
-    "name": {"type": "string", "minLength": 1},
+    "name": {"type": "string"},
     "timezone": {"type": "string", "const": "America/New_York"},
     "calendar": {
       "type": "object",
       "required": ["type", "value"],
-      "additionalProperties": True,
+      "additionalProperties": False,
       "properties": {
         "type": {"type": "string", "const": "exchange"},
         "value": {"type": "string", "const": "XNYS"},
@@ -74,26 +80,26 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     "universe": {
       "type": "object",
       "required": ["signal_symbol", "trade_symbol"],
-      "additionalProperties": True,
+      "additionalProperties": False,
       "properties": {
-        "signal_symbol": {"type": "string", "minLength": 1},
+        "signal_symbol": {"type": "string"},
         "signal_symbol_fallbacks": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1},
-          "minItems": 1,
+          "items": {"type": "string"},
         },
-        "trade_symbol": {"type": "string", "minLength": 1},
+        "trade_symbol": {"type": "string"},
       },
+      "required": ["signal_symbol", "signal_symbol_fallbacks", "trade_symbol"],
     },
     "decision": {
       "type": "object",
       "required": ["decision_time_rule"],
-      "additionalProperties": True,
+      "additionalProperties": False,
       "properties": {
         "decision_time_rule": {
           "type": "object",
           "required": ["type", "offset"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
             "type": {"type": "string", "const": "MARKET_CLOSE_OFFSET"},
             "offset": {"type": "string", "const": "-2m"},
@@ -103,142 +109,81 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     },
     "execution": {
       "type": "object",
-      "required": ["model"],
-      "additionalProperties": True,
+      "required": ["model", "slippage_bps", "commission_per_share", "commission_per_trade"],
+      "additionalProperties": False,
       "properties": {
         "model": {"type": "string", "enum": ["MOC"]},
-        "slippage_bps": {"type": "number", "minimum": 0},
-        "commission_per_share": {"type": "number", "minimum": 0},
-        "commission_per_trade": {"type": "number", "minimum": 0},
+        "slippage_bps": {"type": "number"},
+        "commission_per_share": {"type": "number"},
+        "commission_per_trade": {"type": "number"},
       },
     },
     "risk": {
       "type": "object",
-      "additionalProperties": True,
+      "additionalProperties": False,
+      "required": ["cooldown", "max_orders_per_day"],
       "properties": {
         "cooldown": {
           "type": "object",
           "required": ["scope", "value"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
             "scope": {"type": "string", "enum": ["SYMBOL_ACTION"]},
-            "value": {
-              "oneOf": [
-                {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
-                {
-                  "type": "object",
-                  "required": ["tf", "bars"],
-                  "additionalProperties": False,
-                  "properties": {
-                    "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
-                    "bars": {"type": "integer", "minimum": 1},
-                  },
-                },
-              ]
-            },
+            "value": {"type": ["string", "null"]},
           },
         },
-        "max_orders_per_day": {"type": "integer", "minimum": 1},
+        "max_orders_per_day": {"type": "integer"},
       },
     },
     "dsl": {
       "type": "object",
       "required": ["atomic", "time", "signal", "logic", "action"],
-      "additionalProperties": True,
+      "additionalProperties": False,
       "properties": {
         "atomic": {
           "type": "object",
-          "additionalProperties": True,
+          "additionalProperties": False,
+          "required": ["symbols", "constants"],
           "properties": {
             "symbols": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "additionalProperties": {"type": "string", "minLength": 1},
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": ["name", "ticker"],
-                    "additionalProperties": True,
-                    "properties": {
-                      "name": {"type": "string", "minLength": 1},
-                      "ticker": {"type": "string", "minLength": 1},
-                    },
-                  },
-                },
-              ]
+              "type": "object",
+              "additionalProperties": False,
+              "required": ["signal", "trade"],
+              "properties": {
+                "signal": {"type": "string"},
+                "trade": {"type": "string"},
+              },
             },
             "constants": {
               "type": "object",
-              "additionalProperties": True,
+              "additionalProperties": False,
+              "required": ["sell_fraction", "lookback", "initial_position_qty", "initial_cash"],
               "properties": {
-                "sell_fraction": {"type": "number", "minimum": 0, "maximum": 1},
-                "initial_position_qty": {"type": "number", "minimum": 0},
-                "initial_cash": {"type": "number", "minimum": 0},
-                "lookback": {
-                  "oneOf": [
-                    {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
-                    {
-                      "type": "object",
-                      "required": ["tf", "bars"],
-                      "additionalProperties": False,
-                      "properties": {
-                        "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
-                        "bars": {"type": "integer", "minimum": 1},
-                      },
-                    },
-                  ]
-                },
+                "sell_fraction": {"type": "number"},
+                "initial_position_qty": {"type": "number"},
+                "initial_cash": {"type": "number"},
+                "lookback": {"type": ["string", "null"]},
               },
             },
           },
         },
         "time": {
           "type": "object",
-          "required": ["primary_tf", "derived_tfs"],
-          "additionalProperties": True,
+          "required": ["primary_tf", "derived_tfs", "aggregation"],
+          "additionalProperties": False,
           "properties": {
             "primary_tf": {"type": "string", "enum": ["1m"]},
             "derived_tfs": {
               "type": "array",
               "items": {"type": "string", "enum": ["4h", "1d"]},
-              "minItems": 2,
-              "uniqueItems": True,
             },
             "aggregation": {
               "type": "object",
-              "additionalProperties": True,
+              "additionalProperties": False,
+              "required": ["4h", "1d"],
               "properties": {
-                "4h": {
-                  "oneOf": [
-                    {"type": "string", "enum": ["SESSION_ALIGNED_4H"]},
-                    {
-                      "type": "object",
-                      "additionalProperties": True,
-                      "properties": {
-                        "source_tf": {"type": "string", "enum": ["1m"]},
-                        "bar_close_rule": {"type": "string", "enum": ["SESSION_ALIGNED_4H"]},
-                        "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
-                      },
-                    },
-                  ]
-                },
-                "1d": {
-                  "oneOf": [
-                    {"type": "string", "enum": ["SESSION_ALIGNED_1D", "EXCHANGE_DAILY"]},
-                    {
-                      "type": "object",
-                      "additionalProperties": True,
-                      "properties": {
-                        "source_tf": {"type": "string", "enum": ["1m"]},
-                        "bar_close_rule": {"type": "string", "enum": ["SESSION_ALIGNED_1D", "EXCHANGE_DAILY"]},
-                        "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
-                      },
-                    },
-                  ]
-                },
+                "4h": {"type": "string", "enum": ["SESSION_ALIGNED_4H"]},
+                "1d": {"type": "string", "enum": ["SESSION_ALIGNED_1D", "EXCHANGE_DAILY"]},
               },
             },
           },
@@ -246,42 +191,29 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
         "signal": {
           "type": "object",
           "required": ["indicators", "events"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
             "indicators": {
               "type": "array",
-              "minItems": 1,
               "items": {
                 "type": "object",
                 "required": ["id", "symbol_ref", "tf", "type", "params", "align"],
-                "additionalProperties": True,
+                "additionalProperties": False,
                 "properties": {
-                  "id": {"type": "string", "minLength": 1},
-                  "symbol_ref": {"type": "string", "minLength": 1},
+                  "id": {"type": "string"},
+                  "symbol_ref": {"type": "string"},
                   "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
                   "type": {"type": "string", "enum": ["MACD", "SMA", "MA", "CLOSE"]},
                   "params": {
                     "type": "object",
-                    "additionalProperties": True,
+                    "additionalProperties": False,
+                    "required": ["fast", "slow", "signal", "window", "bar_selection"],
                     "properties": {
-                      "fast": {"type": "integer", "minimum": 1},
-                      "slow": {"type": "integer", "minimum": 1},
-                      "signal": {"type": "integer", "minimum": 1},
-                      "window": {
-                        "oneOf": [
-                          {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
-                          {
-                            "type": "object",
-                            "required": ["tf", "bars"],
-                            "additionalProperties": False,
-                            "properties": {
-                              "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
-                              "bars": {"type": "integer", "minimum": 1},
-                            },
-                          },
-                        ]
-                      },
-                      "bar_selection": {"type": "string", "enum": ["LAST_CLOSED_1D"]},
+                      "fast": {"type": ["integer", "null"]},
+                      "slow": {"type": ["integer", "null"]},
+                      "signal": {"type": ["integer", "null"]},
+                      "window": {"type": ["string", "null"]},
+                      "bar_selection": {"type": ["string", "null"], "enum": ["LAST_CLOSED_1D", None]},
                     },
                   },
                   "align": {"type": "string", "enum": ["LAST_CLOSED", "CARRY_FORWARD"]},
@@ -292,20 +224,19 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "type"],
-                "additionalProperties": True,
+                "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "value", "tf"],
+                "additionalProperties": False,
                 "properties": {
-                  "id": {"type": "string", "minLength": 1},
+                  "id": {"type": "string"},
                   "type": {"type": "string", "enum": ["CROSS", "CROSS_UP", "CROSS_DOWN", "THRESHOLD"]},
-                  "a": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-                  "b": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-                  "left": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-                  "right": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-                  "direction": {"type": "string", "enum": ["UP", "DOWN", "ANY"]},
-                  "op": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
-                  "operator": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
-                  "value": {"type": "number"},
-                  "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
+                  "a": {"type": ["string", "null"]},
+                  "b": {"type": ["string", "null"]},
+                  "left": {"type": ["string", "null"]},
+                  "right": {"type": ["string", "null"]},
+                  "direction": {"type": ["string", "null"], "enum": ["UP", "DOWN", "ANY", None]},
+                  "op": {"type": ["string", "null"], "enum": ["<", "<=", ">", ">=", "==", "!=", None]},
+                  "value": {"type": ["number", "null"]},
+                  "tf": {"type": ["string", "null"], "enum": ["1m", "4h", "1d", None]},
                 },
               },
             },
@@ -314,33 +245,26 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
         "logic": {
           "type": "object",
           "required": ["rules"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
             "rules": {
               "type": "array",
-              "minItems": 1,
               "items": {
                 "type": "object",
                 "required": ["id", "when", "then"],
-                "additionalProperties": True,
+                "additionalProperties": False,
                 "properties": {
-                  "id": {"type": "string", "minLength": 1},
+                  "id": {"type": "string"},
                   "when": {"$ref": "#/$defs/LogicCondition"},
                   "then": {
                     "type": "array",
-                    "minItems": 1,
                     "items": {
-                      "oneOf": [
-                        {"type": "string", "minLength": 1},
-                        {
-                          "type": "object",
-                          "additionalProperties": True,
-                          "properties": {
-                            "action_id": {"type": "string", "minLength": 1},
-                            "id": {"type": "string", "minLength": 1},
-                          },
-                        },
-                      ]
+                      "type": "object",
+                      "required": ["action_id"],
+                      "additionalProperties": False,
+                      "properties": {
+                        "action_id": {"type": "string"},
+                      },
                     },
                   },
                 },
@@ -351,27 +275,26 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
         "action": {
           "type": "object",
           "required": ["actions"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
             "actions": {
               "type": "array",
-              "minItems": 1,
               "items": {
                 "type": "object",
                 "required": ["id", "type", "symbol_ref", "side", "qty", "order_type"],
-                "additionalProperties": True,
+                "additionalProperties": False,
                 "properties": {
-                  "id": {"type": "string", "minLength": 1},
+                  "id": {"type": "string"},
                   "type": {"type": "string", "enum": ["ORDER"]},
-                  "symbol_ref": {"type": "string", "minLength": 1},
+                  "symbol_ref": {"type": "string"},
                   "side": {"type": "string", "enum": ["BUY", "SELL"]},
                   "qty": {
                     "type": "object",
-                    "required": ["mode", "value"],
-                    "additionalProperties": True,
+                    "required": ["mode", "type", "value", "value_ref"],
+                    "additionalProperties": False,
                     "properties": {
                       "mode": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "enum": [
                           "FRACTION_OF_POSITION",
                           "ABSOLUTE",
@@ -381,10 +304,11 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
                           "SHARES",
                           "FRACTION_OF_CASH",
                           "FRACTION_OF_EQUITY",
+                          None,
                         ],
                       },
                       "type": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "enum": [
                           "FRACTION_OF_POSITION",
                           "ABSOLUTE",
@@ -394,30 +318,19 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
                           "SHARES",
                           "FRACTION_OF_CASH",
                           "FRACTION_OF_EQUITY",
+                          None,
                         ],
                       },
-                      "value": {"type": "number", "minimum": 0},
-                      "value_ref": {"type": "string"},
+                      "value": {"type": ["number", "null"]},
+                      "value_ref": {"type": ["string", "null"]},
                     },
                   },
                   "order_type": {"type": "string", "enum": ["MOC"]},
-                  "time_in_force": {"type": "string", "enum": ["DAY"]},
-                  "cooldown": {
-                    "oneOf": [
-                      {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
-                      {
-                        "type": "object",
-                        "required": ["tf", "bars"],
-                        "additionalProperties": False,
-                        "properties": {
-                          "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
-                          "bars": {"type": "integer", "minimum": 1},
-                        },
-                      },
-                    ]
-                  },
-                  "idempotency_scope": {"type": "string", "enum": ["DECISION_DAY"]},
+                  "time_in_force": {"type": ["string", "null"], "enum": ["DAY", None]},
+                  "cooldown": {"type": ["string", "null"]},
+                  "idempotency_scope": {"type": ["string", "null"], "enum": ["DECISION_DAY", None]},
                 },
+                "required": ["id", "type", "symbol_ref", "side", "qty", "order_type", "time_in_force", "cooldown", "idempotency_scope"],
               },
             },
           },
@@ -426,26 +339,27 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     },
     "meta": {
       "type": "object",
-      "additionalProperties": True,
+      "additionalProperties": False,
+      "required": ["created_at", "author", "notes", "mode", "llm_used", "fallback_seed_applied"],
       "properties": {
-        "created_at": {"type": "string", "format": "date-time"},
-        "author": {"type": "string"},
-        "notes": {"type": "string"},
+        "created_at": {"type": ["string", "null"]},
+        "author": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]},
         "mode": {"type": "string", "enum": ["BACKTEST_ONLY", "PAPER", "LIVE"]},
-        "llm_used": {"type": "boolean"},
-        "fallback_seed_applied": {"type": "boolean"},
+        "llm_used": {"type": ["boolean", "null"]},
+        "fallback_seed_applied": {"type": ["boolean", "null"]},
       },
     },
   },
   "$defs": {
     "LogicCondition": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "object",
           "required": ["all"],
           "additionalProperties": False,
           "properties": {
-            "all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/LogicCondition"}},
+            "all": {"type": "array", "items": {"$ref": "#/$defs/LogicCondition"}},
           },
         },
         {
@@ -453,7 +367,7 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
           "required": ["any"],
           "additionalProperties": False,
           "properties": {
-            "any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/LogicCondition"}},
+            "any": {"type": "array", "items": {"$ref": "#/$defs/LogicCondition"}},
           },
         },
         {
@@ -464,23 +378,10 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
             "event_within": {
               "type": "object",
               "required": ["event_id", "lookback"],
-              "additionalProperties": True,
+              "additionalProperties": False,
               "properties": {
-                "event_id": {"type": "string", "minLength": 1},
-                "lookback": {
-                  "oneOf": [
-                    {"type": "string", "pattern": r"^\d+(d|h|m|bars@1m|bars@4h|bars@1d)$"},
-                    {
-                      "type": "object",
-                      "required": ["tf", "bars"],
-                      "additionalProperties": False,
-                      "properties": {
-                        "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
-                        "bars": {"type": "integer", "minimum": 1},
-                      },
-                    },
-                  ]
-                },
+                "event_id": {"type": "string"},
+                "lookback": {"type": "string"},
               },
             },
           },
@@ -488,11 +389,12 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
         {
           "type": "object",
           "required": ["event_id"],
-          "additionalProperties": True,
+          "additionalProperties": False,
           "properties": {
-            "event_id": {"type": "string", "minLength": 1},
-            "scope": {"type": "string", "enum": ["LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", "BAR", ""]},
+            "event_id": {"type": "string"},
+            "scope": {"type": ["string", "null"], "enum": ["LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", "BAR", "", None]},
           },
+          "required": ["event_id", "scope"],
         },
         {
           "type": "object",
@@ -504,8 +406,8 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
               "required": ["a", "b"],
               "additionalProperties": False,
               "properties": {
-                "a": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
-                "b": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+                "a": {"type": ["string", "number"]},
+                "b": {"type": ["string", "number"]},
               },
             },
           },
@@ -520,8 +422,8 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
               "required": ["a", "b"],
               "additionalProperties": False,
               "properties": {
-                "a": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
-                "b": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+                "a": {"type": ["string", "number"]},
+                "b": {"type": ["string", "number"]},
               },
             },
           },
@@ -532,8 +434,8 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
           "additionalProperties": False,
           "properties": {
             "op": {"type": "string", "enum": ["<", "<=", ">", ">=", "==", "!="]},
-            "left": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
-            "right": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "object"}]},
+            "left": {"type": ["string", "number"]},
+            "right": {"type": ["string", "number"]},
           },
         },
       ]
@@ -558,6 +460,82 @@ def _deep_merge(base: Any, incoming: Any) -> Any:
       merged[key] = _deep_merge(base.get(key), value)
     return merged
   return incoming if incoming is not None else base
+
+
+def _normalize_event_shape(spec: dict[str, Any]) -> dict[str, Any]:
+  dsl = spec.get("dsl")
+  if not isinstance(dsl, dict):
+    return spec
+  signal = dsl.get("signal")
+  if not isinstance(signal, dict):
+    return spec
+
+  indicators = signal.get("indicators")
+  events = signal.get("events")
+  if not isinstance(indicators, list) or not isinstance(events, list):
+    return spec
+
+  macd_4h_id: str | None = None
+  close_1m_id: str | None = None
+  ma_1d_id: str | None = None
+  for ind in indicators:
+    if not isinstance(ind, dict):
+      continue
+    ind_id = str(ind.get("id") or "").strip()
+    ind_type = str(ind.get("type") or "").strip().upper()
+    tf = str(ind.get("tf") or "").strip().lower()
+    if not ind_id:
+      continue
+    if ind_type == "MACD" and tf == "4h" and macd_4h_id is None:
+      macd_4h_id = ind_id
+    if ind_type == "CLOSE" and tf == "1m" and close_1m_id is None:
+      close_1m_id = ind_id
+    if ind_type in ("SMA", "MA") and tf == "1d" and ma_1d_id is None:
+      ma_1d_id = ind_id
+
+  for ev in events:
+    if not isinstance(ev, dict):
+      continue
+    ev_type = str(ev.get("type") or "").strip().upper()
+
+    if ev_type in ("CROSS", "CROSS_DOWN", "CROSS_UP"):
+      if macd_4h_id:
+        a_raw = str(ev.get("a") or "").strip()
+        b_raw = str(ev.get("b") or "").strip()
+        if "." not in a_raw:
+          ev["a"] = f"{macd_4h_id}.macd"
+        if "." not in b_raw:
+          ev["b"] = f"{macd_4h_id}.signal"
+      ev["left"] = None
+      ev["right"] = None
+      ev["op"] = None
+      ev["value"] = None
+      if ev_type == "CROSS_DOWN":
+        ev["direction"] = "DOWN"
+      elif ev_type == "CROSS_UP":
+        ev["direction"] = "UP"
+
+    if ev_type == "THRESHOLD":
+      left_raw = ev.get("left")
+      right_raw = ev.get("right")
+      a_raw = ev.get("a")
+      b_raw = ev.get("b")
+      if left_raw in (None, "") and isinstance(a_raw, str) and a_raw.strip():
+        ev["left"] = a_raw.strip()
+      if right_raw in (None, "") and isinstance(b_raw, str) and b_raw.strip():
+        ev["right"] = b_raw.strip()
+      if ev.get("left") in (None, "") and close_1m_id:
+        ev["left"] = close_1m_id
+      if ev.get("right") in (None, "") and ma_1d_id:
+        ev["right"] = ma_1d_id
+      if ev.get("op") in (None, ""):
+        ev["op"] = "<"
+      ev["a"] = None
+      ev["b"] = None
+      ev["direction"] = None
+      ev["value"] = None
+
+  return spec
 
 
 def build_default_mvp_spec(nl_text: str, mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"]) -> dict[str, Any]:
@@ -700,6 +678,7 @@ The output MUST include a fully runnable five-layer DSL:
     )
     if isinstance(llm_spec, dict):
       spec = _deep_merge(base_spec, llm_spec)
+      spec = _normalize_event_shape(spec)
       llm_used = True
   else:
     spec = _deep_merge(base_spec, fallback_seed)
