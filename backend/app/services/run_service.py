@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.core.config import settings
 from app.db.engine import SessionLocal
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
@@ -116,7 +117,13 @@ async def execute_run(
     spec = strategy.spec
 
     try:
-      await _set_step_state(db, run_id, "parse", "RUNNING", _log("INFO", "Parsing strategy spec"))
+      await _set_step_state(
+        db,
+        run_id,
+        "parse",
+        "RUNNING",
+        _log("INFO", "Parsing strategy spec", {"model": settings.llm_model}),
+      )
       await _upsert_artifact(db, run_id, "dsl.json", "json", f"/api/runs/{run_id}/artifacts/dsl.json", content=spec)
       inputs_snapshot = {
         "strategy_version": strategy.strategy_version,
@@ -133,7 +140,13 @@ async def execute_run(
         f"/api/runs/{run_id}/artifacts/inputs_snapshot.json",
         content=inputs_snapshot,
       )
-      await _set_step_state(db, run_id, "parse", "DONE", _log("INFO", "StrategySpec ready", {"strategy_version": strategy.strategy_version}))
+      await _set_step_state(
+        db,
+        run_id,
+        "parse",
+        "DONE",
+        _log("INFO", "StrategySpec ready", {"strategy_version": strategy.strategy_version, "model": settings.llm_model}),
+      )
 
       await _set_step_state(db, run_id, "plan", "RUNNING", _log("INFO", "Building execution plan"))
       plan = {

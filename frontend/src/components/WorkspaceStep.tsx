@@ -57,14 +57,33 @@ function DataSynthContent({ step }: { step: StepInfo }) {
   );
 }
 
+function ParseContent({ step }: { step: StepInfo }) {
+  const latestLog = step.logs[step.logs.length - 1] || "";
+  const modelMatch = latestLog.match(/"model":"([^"]+)"/);
+  const model = modelMatch?.[1];
+  return (
+    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-foreground">LLM Model</span>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {model ? model : "Loading model info..."}
+      </div>
+    </div>
+  );
+}
+
 function BacktestContent({ progress, step }: { progress: number; step: StepInfo }) {
   const isRunning = step.status === 'running';
   const isDone = step.status === 'done';
   const latestProgressLog = [...step.logs].reverse().find((log) => log.includes('Backtesting '));
   const progressMatch = latestProgressLog?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
-  const runLog = step.logs.find((log) => log.includes('Running backtest'));
-  const startMatch = runLog?.match(/start_date\":\"(\d{4}-\d{2}-\d{2})\"/);
   const displayProgress = isDone ? 100 : (progressMatch ? Number(progressMatch[4]) : progress);
+  const progressText = isDone
+    ? '已完成'
+    : progressMatch?.[1]
+      ? `正在进行中... 正在处理${progressMatch[1]}`
+      : '开始运行';
 
   return (
     <div className="mt-2.5 space-y-2.5">
@@ -87,7 +106,7 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
           <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
         )}
         <span className="text-muted-foreground">
-          Start {startMatch?.[1] || '-'} - Current {progressMatch?.[1] || '-'} - Completed {progressMatch ? `${progressMatch[2]}/${progressMatch[3]}` : '-'}
+          {progressText}
         </span>
       </div>
     </div>
@@ -121,6 +140,7 @@ function ErrorLogs({ logs }: { logs: string[] }) {
 
 export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
   const isActive = step.status === 'running' || step.status === 'done' || step.status === 'error';
+  const isParse = step.key === 'parse';
   const isData = step.key === 'data';
   const isBacktest = step.key === 'backtest';
 
@@ -179,12 +199,15 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
           </div>
         </div>
 
-        {isActive && step.logs.length > 0 && !isBacktest && (
+        {isActive && step.logs.length > 0 && !isBacktest && !isParse && (
           <p className="text-xs text-muted-foreground mt-1.5 ml-[30px]">{step.logs[0]}</p>
         )}
 
         {isActive && (
           <div className="ml-[30px]">
+            {isParse && step.status !== 'error' && (
+              <ParseContent step={step} />
+            )}
             {isData && step.status !== 'error' && (
               <DataSynthContent step={step} />
             )}
