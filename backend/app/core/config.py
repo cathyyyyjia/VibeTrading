@@ -14,9 +14,7 @@ class Settings(BaseSettings):
   database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/vibetrading"
   redis_url: str = "redis://localhost:6379/0"
 
-  supabase_jwt_secret: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "SUPABASE_SECRET_KEY"))
-  oauth_jwt_secret: str | None = None
-  oauth_ingest_secret: str | None = None
+  supabase_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_SECRET_KEY"))
   supabase_project_url: str | None = None
 
   llm_base_url: AnyHttpUrl = "https://api.openai.com/v1"
