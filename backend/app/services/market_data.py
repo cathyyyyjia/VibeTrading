@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -95,12 +94,96 @@ class PolygonProvider(MarketDataProvider):
     return bars
 
 
+class AlpacaProvider(MarketDataProvider):
+  def __init__(self, base_url: str, api_key: str, api_secret: str, feed: str) -> None:
+    self._base_url = base_url.rstrip("/")
+    self._api_key = api_key
+    self._api_secret = api_secret
+    self._feed = feed
+
+  async def get_minute_bars(self, symbol: str, start: datetime, end: datetime) -> list[MinuteBar]:
+    if not self._api_key or not self._api_secret:
+      raise AppError("CONFIG_ERROR", "Alpaca credentials are missing", {"required": ["ALPACA_PAPER_API_KEY", "ALPACA_PAPER_API_SECRET"]}, http_status=500)
+
+    headers = {
+      "APCA-API-KEY-ID": self._api_key,
+      "APCA-API-SECRET-KEY": self._api_secret,
+    }
+    bars: list[MinuteBar] = []
+    next_page_token: str | None = None
+
+    start_s = start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    end_s = end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+      for _ in range(20):
+        params: dict[str, str] = {
+          "symbols": symbol,
+          "timeframe": "1Min",
+          "start": start_s,
+          "end": end_s,
+          "adjustment": "all",
+          "sort": "asc",
+          "limit": "10000",
+          "feed": self._feed,
+        }
+        if next_page_token:
+          params["page_token"] = next_page_token
+
+        resp = await client.get(f"{self._base_url}/v2/stocks/bars", params=params, headers=headers)
+        if resp.status_code >= 400:
+          raise AppError(
+            "DATA_UNAVAILABLE",
+            "Alpaca request failed",
+            {"status": resp.status_code, "body": resp.text[:2000], "symbol": symbol},
+            http_status=502,
+          )
+        payload = resp.json()
+        raw = (payload.get("bars") or {}).get(symbol) or []
+        for r in raw:
+          bars.append(
+            MinuteBar(
+              ts=datetime.fromisoformat(str(r["t"]).replace("Z", "+00:00")).astimezone(timezone.utc),
+              o=float(r["o"]),
+              h=float(r["h"]),
+              l=float(r["l"]),
+              c=float(r["c"]),
+              v=float(r.get("v") or 0),
+            )
+          )
+
+        next_page_token = payload.get("next_page_token")
+        if not next_page_token:
+          break
+
+    if not bars:
+      raise AppError("DATA_UNAVAILABLE", "No Alpaca bars returned", {"symbol": symbol, "start": start_s, "end": end_s}, http_status=404)
+    bars.sort(key=lambda b: b.ts)
+    return bars
+
+
 def get_market_data_provider() -> MarketDataProvider:
-  if settings.market_data_provider.lower() == "polygon":
+  provider = settings.market_data_provider.lower()
+  if provider == "alpaca":
+    if not settings.alpaca_paper_api_key or not settings.alpaca_paper_api_secret:
+      raise AppError(
+        "CONFIG_ERROR",
+        "Alpaca provider selected but credentials are missing",
+        {"required": ["ALPACA_PAPER_API_KEY", "ALPACA_PAPER_API_SECRET"]},
+        http_status=500,
+      )
+    return AlpacaProvider(
+      base_url=str(settings.alpaca_data_base_url),
+      api_key=settings.alpaca_paper_api_key,
+      api_secret=settings.alpaca_paper_api_secret,
+      feed=settings.alpaca_data_feed,
+    )
+  if provider == "polygon":
     if settings.polygon_api_key:
       return PolygonProvider(settings.polygon_api_key)
     return SyntheticProvider()
-  if settings.market_data_provider.lower() == "synthetic":
+  if provider == "synthetic":
     return SyntheticProvider()
   return SyntheticProvider()
 
@@ -108,4 +191,3 @@ def get_market_data_provider() -> MarketDataProvider:
 def compute_data_health(provider: MarketDataProvider, signal_symbol: str, used_fallback: bool) -> dict[str, Any]:
   source: Literal["primary", "fallback"] = "fallback" if used_fallback else "primary"
   return {"source": source, "is_fallback": used_fallback, "missing_ratio": 0.0, "gaps": []}
-

@@ -13,6 +13,7 @@ from app.core.errors import AppError
 from app.db.engine import SessionLocal
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
+from app.db.models import User
 from app.services.backtest_engine import run_backtest_from_spec
 from app.services.spec_builder import compute_strategy_version, nl_to_strategy_spec
 
@@ -78,8 +79,8 @@ async def _upsert_artifact(db: AsyncSession, run_id: uuid.UUID, name: str, type_
     raise
 
 
-async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest) -> Run:
-  spec = await nl_to_strategy_spec(req.nl, req.mode)
+async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, user_id: uuid.UUID) -> Run:
+  spec = await nl_to_strategy_spec(req.nl, req.mode, overrides=req.overrides)
   if not isinstance(spec, dict):
     raise AppError("VALIDATION_ERROR", "StrategySpec must be an object", {"type": str(type(spec))})
 
@@ -91,11 +92,12 @@ async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest) -> R
     strategy_version=str(spec["strategy_version"]),
     prompt=req.nl,
     spec=spec,
+    user_id=user_id,
   )
   db.add(strategy)
   await db.flush()
 
-  run = Run(strategy_id=strategy.id, mode=req.mode, state="running", progress=0)
+  run = Run(strategy_id=strategy.id, mode=req.mode, state="running", progress=0, user_id=user_id)
   db.add(run)
   await db.flush()
 
@@ -162,7 +164,19 @@ async def execute_run(run_id: uuid.UUID) -> None:
       report_md = f"# Backtest Report\n\n- Trades: {len(result.trades)}\n- Return%: {result.kpis.get('return_pct'):.2f}\n- Sharpe: {result.kpis.get('sharpe'):.2f}\n- MaxDD%: {result.kpis.get('max_dd_pct'):.2f}\n"
       await _upsert_artifact(db, run_id, "report.md", "markdown", f"/api/runs/{run_id}/artifacts/report.md", content={"markdown": report_md})
       await _upsert_artifact(db, run_id, "equity.png", "image", f"/api/runs/{run_id}/artifacts/equity.png", content=None)
-      await _upsert_artifact(db, run_id, "trades.csv", "csv", f"/api/runs/{run_id}/artifacts/trades.csv", content=None)
+      csv_lines = ["decision_time,fill_time,symbol,side,qty,fill_price"]
+      for t in result.trades:
+        csv_lines.append(
+          f"{t['decision_time'].isoformat()},{t['fill_time'].isoformat()},{t['symbol']},{t['side']},{t['qty']},{t['fill_price']}"
+        )
+      await _upsert_artifact(
+        db,
+        run_id,
+        "trades.csv",
+        "csv",
+        f"/api/runs/{run_id}/artifacts/trades.csv",
+        content={"csv": "\n".join(csv_lines)},
+      )
       await _set_step_state(db, run_id, "report", "DONE", _log("INFO", "Report ready"))
 
       for t in result.trades:

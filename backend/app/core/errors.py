@@ -6,10 +6,10 @@ from typing import Any, Literal
 from fastapi import Request
 from fastapi.responses import ORJSONResponse
 
-ErrorCode = Literal["VALIDATION_ERROR", "DATA_UNAVAILABLE", "EXECUTION_GUARD_BLOCKED", "INTERNAL", "UNAUTHORIZED"]
+ErrorCode = Literal["VALIDATION_ERROR", "DATA_UNAVAILABLE", "EXECUTION_GUARD_BLOCKED", "INTERNAL", "UNAUTHORIZED", "CONFIG_ERROR"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class AppError(Exception):
   code: ErrorCode
   message: str
@@ -30,4 +30,3 @@ async def app_error_handler(_: Request, exc: AppError) -> ORJSONResponse:
 
 async def unhandled_error_handler(_: Request, exc: Exception) -> ORJSONResponse:
   return error_response("INTERNAL", "Unhandled error", {"error": str(exc)}, status=500)
-

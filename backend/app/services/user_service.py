@@ -13,6 +13,22 @@ from app.db.models import OAuthIdentity, User
 def _now() -> datetime:
   return datetime.now(timezone.utc)
 
+async def ensure_user_from_claims(
+  db: AsyncSession,
+  provider: str,
+  payload: dict[str, Any],
+) -> User:
+  subject = payload.get("sub")
+  email = payload.get("email") if isinstance(payload.get("email"), str) else None
+  name = None
+  user_metadata = payload.get("user_metadata")
+  if isinstance(user_metadata, dict):
+    nm = user_metadata.get("name")
+    if isinstance(nm, str):
+      name = nm
+  if name is None and isinstance(payload.get("name"), str):
+    name = payload.get("name")
+  return await upsert_oauth_identity(db, provider=provider, subject=str(subject), email=email, name=name, profile=payload)
 
 async def upsert_oauth_identity(
   db: AsyncSession,
@@ -60,4 +76,3 @@ async def get_user_with_identities(db: AsyncSession, user_id: uuid.UUID) -> tupl
   user = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
   identities = (await db.execute(select(OAuthIdentity).where(OAuthIdentity.user_id == user_id))).scalars().all()
   return user, list(identities)
-

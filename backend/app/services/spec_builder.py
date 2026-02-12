@@ -55,10 +55,19 @@ def compute_strategy_version(spec: dict[str, Any]) -> str:
   return hashlib.sha256(raw).hexdigest()[:32]
 
 
+def _deep_merge(base: Any, incoming: Any) -> Any:
+  if isinstance(base, dict) and isinstance(incoming, dict):
+    merged = dict(base)
+    for key, value in incoming.items():
+      merged[key] = _deep_merge(base.get(key), value)
+    return merged
+  return incoming if incoming is not None else base
+
+
 def build_default_mvp_spec(nl_text: str, mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"]) -> dict[str, Any]:
   now = datetime.now(timezone.utc).isoformat()
   spec: dict[str, Any] = {
-    "strategy_id": "auto",
+    "strategy_id": "stg_auto_v0",
     "strategy_version": "",
     "name": (nl_text[:80] + "...") if len(nl_text) > 80 else nl_text,
     "timezone": "America/New_York",
@@ -124,23 +133,35 @@ def build_default_mvp_spec(nl_text: str, mode: Literal["BACKTEST_ONLY", "PAPER",
   return spec
 
 
-async def nl_to_strategy_spec(nl_text: str, mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"]) -> dict[str, Any]:
+async def nl_to_strategy_spec(
+  nl_text: str,
+  mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
+  overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
   user_prompt = f"""User natural language strategy description: "{nl_text}"
 Additional context:
 - mode: "{mode}"
 Task:
 Return ONLY the JSON of StrategySpec. The JSON MUST be syntactically valid.
 """
+  base_spec = build_default_mvp_spec(nl_text, mode)
+  spec: dict[str, Any] = dict(base_spec)
 
   if llm_client.is_configured:
-    spec = await llm_client.chat_json(SYSTEM_PROMPT_V0, user_prompt)
-    if isinstance(spec, dict) and "strategy_version" in spec and spec.get("strategy_version") in ("", None):
-      spec["strategy_version"] = compute_strategy_version({k: v for k, v in spec.items() if k != "strategy_version"})
-    spec = enforce_hard_rules(spec)
-    validate_strategy_spec_minimal(spec)
-    return spec
+    llm_spec = await llm_client.chat_json(SYSTEM_PROMPT_V0, user_prompt)
+    if isinstance(llm_spec, dict):
+      spec = _deep_merge(base_spec, llm_spec)
 
-  spec = build_default_mvp_spec(nl_text, mode)
+  if overrides and isinstance(overrides, dict):
+    spec = _deep_merge(spec, overrides)
+
+  if not isinstance(spec.get("name"), str) or not spec["name"].strip():
+    spec["name"] = (nl_text[:80] + "...") if len(nl_text) > 80 else nl_text
+
+  if not isinstance(spec.get("strategy_id"), str) or not spec["strategy_id"].strip():
+    spec["strategy_id"] = f"stg_{compute_strategy_version({k: v for k, v in spec.items() if k != 'strategy_version'})[:12]}"
+
+  spec["strategy_version"] = compute_strategy_version({k: v for k, v in spec.items() if k != "strategy_version"})
   spec = enforce_hard_rules(spec)
   validate_strategy_spec_minimal(spec)
   return spec

@@ -5,12 +5,15 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import Query
 from pydantic import BaseModel
 from fastapi.responses import ORJSONResponse
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, error_response
+from app.core.auth import get_auth_claims
 from app.db.engine import get_db
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import (
@@ -24,6 +27,7 @@ from app.schemas.contracts import (
   WorkspaceStep,
 )
 from app.services.run_service import create_run, execute_run
+from app.services.user_service import ensure_user_from_claims
 
 
 router = APIRouter()
@@ -34,8 +38,11 @@ async def post_run(
   req: NaturalLanguageStrategyRequest,
   background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
+  claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
 ) -> CreateRunResponse:
-  run = await create_run(db, req)
+  provider, payload = claims
+  user = await ensure_user_from_claims(db, provider, payload)
+  run = await create_run(db, req, user_id=user.id)
   background_tasks.add_task(execute_run, run.id)
   return CreateRunResponse(
     run_id=str(run.id),
@@ -57,11 +64,22 @@ def _coerce_logs(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
   return out
 
 
-@router.get("/{run_id}/status", response_model=RunStatusResponse)
-async def get_status(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunStatusResponse:
-  run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one_or_none()
+async def _get_user_owned_run(
+  db: AsyncSession,
+  run_id: uuid.UUID,
+  claims: tuple[str, dict[str, Any]],
+) -> Run:
+  provider, payload = claims
+  user = await ensure_user_from_claims(db, provider, payload)
+  run = (await db.execute(select(Run).where(Run.id == run_id, Run.user_id == user.id))).scalar_one_or_none()
   if run is None:
     raise AppError("DATA_UNAVAILABLE", "run not found", {"run_id": str(run_id)}, http_status=404)
+  return run
+
+
+@router.get("/{run_id}/status", response_model=RunStatusResponse)
+async def get_status(run_id: uuid.UUID, db: AsyncSession = Depends(get_db), claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims)) -> RunStatusResponse:
+  run = await _get_user_owned_run(db, run_id, claims)
 
   steps = (await db.execute(select(RunStep).where(RunStep.run_id == run_id))).scalars().all()
   artifacts = (await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id).order_by(RunArtifact.created_at.asc()))).scalars().all()
@@ -80,19 +98,36 @@ async def get_status(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> R
 
 
 @router.get("/{run_id}/report", response_model=BacktestReportResponse)
-async def get_report(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> BacktestReportResponse:
+async def get_report(
+  run_id: uuid.UUID,
+  db: AsyncSession = Depends(get_db),
+  claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
+  format: str | None = Query(default=None),
+) -> BacktestReportResponse | PlainTextResponse:
+  await _get_user_owned_run(db, run_id, claims)
   art = (
     await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == "report.json"))
   ).scalar_one_or_none()
   if art is None or art.content is None:
     raise AppError("DATA_UNAVAILABLE", "report not ready", {"run_id": str(run_id)}, http_status=404)
+  if format == "csv":
+    trades = art.content.get("trades") if isinstance(art.content, dict) else None
+    if not isinstance(trades, list):
+      return PlainTextResponse("", media_type="text/csv")
+    rows = ["decision_time,fill_time,symbol,side,qty,fill_price"]
+    for t in trades:
+      if isinstance(t, dict):
+        rows.append(f"{t.get('decision_time','')},{t.get('fill_time','')},{t.get('symbol','')},{t.get('side','')},{t.get('qty','')},{t.get('fill_price','')}")
+    return PlainTextResponse("\n".join(rows), media_type="text/csv")
   return BacktestReportResponse.model_validate(art.content)
 
 
 @router.get("/history", response_model=RunHistoryResponse)
-async def get_history(db: AsyncSession = Depends(get_db)) -> RunHistoryResponse:
+async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims)) -> RunHistoryResponse:
+  provider, payload = claims
+  user = await ensure_user_from_claims(db, provider, payload)
   runs = (
-    await db.execute(select(Run).where(Run.state.in_(["completed", "failed"])).order_by(Run.updated_at.desc()).limit(100))
+    await db.execute(select(Run).where(Run.user_id == user.id, Run.state.in_(["completed", "failed"])).order_by(Run.updated_at.desc()).limit(100))
   ).scalars().all()
 
   out: list[RunHistoryEntry] = []
@@ -125,10 +160,20 @@ async def get_history(db: AsyncSession = Depends(get_db)) -> RunHistoryResponse:
 
 
 @router.get("/{run_id}/artifacts/{name}")
-async def get_artifact(run_id: uuid.UUID, name: str, db: AsyncSession = Depends(get_db)) -> ORJSONResponse:
+async def get_artifact(
+  run_id: uuid.UUID,
+  name: str,
+  db: AsyncSession = Depends(get_db),
+  claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
+) -> ORJSONResponse | PlainTextResponse:
+  await _get_user_owned_run(db, run_id, claims)
   art = (await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == name))).scalar_one_or_none()
   if art is None:
     return error_response("DATA_UNAVAILABLE", "artifact not found", {"run_id": str(run_id), "name": name}, status=404)
+  if art.type == "csv" and isinstance(art.content, dict) and isinstance(art.content.get("csv"), str):
+    return PlainTextResponse(art.content["csv"], media_type="text/csv")
+  if art.type == "markdown" and isinstance(art.content, dict) and isinstance(art.content.get("markdown"), str):
+    return PlainTextResponse(art.content["markdown"], media_type="text/markdown")
   return ORJSONResponse({"name": art.name, "type": art.type, "uri": art.uri, "content": art.content})
 
 
@@ -137,8 +182,6 @@ class DeployRequest(BaseModel):
 
 
 @router.post("/{run_id}/deploy")
-async def deploy(run_id: uuid.UUID, _: DeployRequest, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
-  run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one_or_none()
-  if run is None:
-    raise AppError("DATA_UNAVAILABLE", "run not found", {"run_id": str(run_id)}, http_status=404)
+async def deploy(run_id: uuid.UUID, _: DeployRequest, db: AsyncSession = Depends(get_db), claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims)) -> dict[str, str]:
+  await _get_user_owned_run(db, run_id, claims)
   return {"deployId": str(run_id), "status": "queued"}

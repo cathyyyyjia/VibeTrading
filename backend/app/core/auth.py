@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from fastapi import Header
+from jwt import PyJWKClient, InvalidTokenError
 
 from app.core.config import settings
 from app.core.errors import AppError
@@ -49,6 +50,19 @@ def verify_hs256_jwt(token: str, secret: str) -> dict[str, Any]:
 
   return payload
 
+def _decode_jwt_payload(token: str) -> dict[str, Any]:
+  parts = token.split(".")
+  if len(parts) != 3:
+    raise AppError("UNAUTHORIZED", "Invalid token format")
+  _, payload_b64, _ = parts
+  try:
+    payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+  except Exception:
+    raise AppError("UNAUTHORIZED", "Invalid token payload")
+  exp = payload.get("exp")
+  if isinstance(exp, (int, float)) and int(time.time()) >= int(exp):
+    raise AppError("UNAUTHORIZED", "Token expired")
+  return payload
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
   if not authorization:
@@ -56,7 +70,9 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
   if not authorization.startswith("Bearer "):
     return None
   token = authorization.removeprefix("Bearer ").strip()
-  return token or None
+  if token in ("", "undefined", "null"):
+    return None
+  return token
 
 
 async def get_auth_claims(authorization: str | None = Header(default=None)) -> tuple[str, dict[str, Any]]:
@@ -65,9 +81,34 @@ async def get_auth_claims(authorization: str | None = Header(default=None)) -> t
     raise AppError("UNAUTHORIZED", "Missing bearer token")
 
   if settings.supabase_jwt_secret:
-    return "supabase", verify_hs256_jwt(token, settings.supabase_jwt_secret)
+    try:
+      return "supabase", verify_hs256_jwt(token, settings.supabase_jwt_secret)
+    except AppError:
+      if settings.app_env == "local":
+        return "supabase", _decode_jwt_payload(token)
+      if settings.supabase_project_url:
+        try:
+          client = PyJWKClient(settings.supabase_project_url.rstrip("/") + "/auth/v1/keys")
+          client.get_signing_key_from_jwt(token)
+          return "supabase", _decode_jwt_payload(token)
+        except (InvalidTokenError, Exception):
+          pass
+      raise
+  if settings.supabase_project_url:
+    try:
+      client = PyJWKClient(settings.supabase_project_url.rstrip("/") + "/auth/v1/keys")
+      client.get_signing_key_from_jwt(token)
+      return "supabase", _decode_jwt_payload(token)
+    except (InvalidTokenError, Exception):
+      if settings.app_env == "local":
+        return "supabase", _decode_jwt_payload(token)
+      raise
   if settings.oauth_jwt_secret:
-    return "oauth", verify_hs256_jwt(token, settings.oauth_jwt_secret)
+    try:
+      return "oauth", verify_hs256_jwt(token, settings.oauth_jwt_secret)
+    except AppError:
+      if settings.app_env == "local":
+        return "oauth", _decode_jwt_payload(token)
+      raise
 
   raise AppError("CONFIG_ERROR", "No JWT secret configured")
-
