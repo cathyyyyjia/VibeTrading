@@ -109,12 +109,11 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     },
     "execution": {
       "type": "object",
-      "required": ["model", "slippage_bps", "commission_per_share", "commission_per_trade"],
+      "required": ["model", "slippage_bps", "commission_per_trade"],
       "additionalProperties": False,
       "properties": {
         "model": {"type": "string", "enum": ["MOC"]},
         "slippage_bps": {"type": "number"},
-        "commission_per_share": {"type": "number"},
         "commission_per_trade": {"type": "number"},
       },
     },
@@ -157,11 +156,9 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
             "constants": {
               "type": "object",
               "additionalProperties": False,
-              "required": ["sell_fraction", "lookback", "initial_position_qty", "initial_cash"],
+              "required": ["sell_fraction", "lookback"],
               "properties": {
                 "sell_fraction": {"type": "number"},
-                "initial_position_qty": {"type": "number"},
-                "initial_cash": {"type": "number"},
                 "lookback": {"type": ["string", "null"]},
               },
             },
@@ -224,7 +221,7 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "value", "tf"],
+                "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "tf"],
                 "additionalProperties": False,
                 "properties": {
                   "id": {"type": "string"},
@@ -235,7 +232,6 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
                   "right": {"type": ["string", "null"]},
                   "direction": {"type": ["string", "null"], "enum": ["UP", "DOWN", "ANY", None]},
                   "op": {"type": ["string", "null"], "enum": ["<", "<=", ">", ">=", "==", "!=", None]},
-                  "value": {"type": ["number", "null"]},
                   "tf": {"type": ["string", "null"], "enum": ["1m", "4h", "1d", None]},
                 },
               },
@@ -290,7 +286,7 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
                   "side": {"type": "string", "enum": ["BUY", "SELL"]},
                   "qty": {
                     "type": "object",
-                    "required": ["mode", "type", "value", "value_ref"],
+                    "required": ["mode", "value"],
                     "additionalProperties": False,
                     "properties": {
                       "mode": {
@@ -307,22 +303,7 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
                           None,
                         ],
                       },
-                      "type": {
-                        "type": ["string", "null"],
-                        "enum": [
-                          "FRACTION_OF_POSITION",
-                          "ABSOLUTE",
-                          "NOTIONAL_USD",
-                          "FIXED",
-                          "FIXED_SHARES",
-                          "SHARES",
-                          "FRACTION_OF_CASH",
-                          "FRACTION_OF_EQUITY",
-                          None,
-                        ],
-                      },
                       "value": {"type": ["number", "null"]},
-                      "value_ref": {"type": ["string", "null"]},
                     },
                   },
                   "order_type": {"type": "string", "enum": ["MOC"]},
@@ -340,14 +321,12 @@ STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
     "meta": {
       "type": "object",
       "additionalProperties": False,
-      "required": ["created_at", "author", "notes", "mode", "llm_used", "fallback_seed_applied"],
+      "required": ["created_at", "author", "notes", "mode"],
       "properties": {
         "created_at": {"type": ["string", "null"]},
         "author": {"type": ["string", "null"]},
         "notes": {"type": ["string", "null"]},
         "mode": {"type": "string", "enum": ["BACKTEST_ONLY", "PAPER", "LIVE"]},
-        "llm_used": {"type": ["boolean", "null"]},
-        "fallback_seed_applied": {"type": ["boolean", "null"]},
       },
     },
   },
@@ -472,8 +451,16 @@ def _normalize_event_shape(spec: dict[str, Any]) -> dict[str, Any]:
 
   indicators = signal.get("indicators")
   events = signal.get("events")
+  logic = dsl.get("logic")
+  action = dsl.get("action")
+  rules = logic.get("rules") if isinstance(logic, dict) else None
+  actions = action.get("actions") if isinstance(action, dict) else None
+
   if not isinstance(indicators, list) or not isinstance(events, list):
     return spec
+
+  indicator_ids: set[str] = set()
+  action_ids: list[str] = []
 
   macd_4h_id: str | None = None
   close_1m_id: str | None = None
@@ -486,12 +473,20 @@ def _normalize_event_shape(spec: dict[str, Any]) -> dict[str, Any]:
     tf = str(ind.get("tf") or "").strip().lower()
     if not ind_id:
       continue
+    indicator_ids.add(ind_id)
     if ind_type == "MACD" and tf == "4h" and macd_4h_id is None:
       macd_4h_id = ind_id
     if ind_type == "CLOSE" and tf == "1m" and close_1m_id is None:
       close_1m_id = ind_id
     if ind_type in ("SMA", "MA") and tf == "1d" and ma_1d_id is None:
       ma_1d_id = ind_id
+
+  if isinstance(actions, list):
+    for a in actions:
+      if isinstance(a, dict):
+        aid = str(a.get("id") or "").strip()
+        if aid:
+          action_ids.append(aid)
 
   for ev in events:
     if not isinstance(ev, dict):
@@ -528,6 +523,20 @@ def _normalize_event_shape(spec: dict[str, Any]) -> dict[str, Any]:
         ev["left"] = close_1m_id
       if ev.get("right") in (None, "") and ma_1d_id:
         ev["right"] = ma_1d_id
+      # Ensure refs point to existing indicator ids to avoid always-false signals.
+      for key, fallback_id in (("left", close_1m_id), ("right", ma_1d_id)):
+        raw = ev.get(key)
+        if isinstance(raw, str) and raw:
+          ref_id = raw.split("@", 1)[0].split(".", 1)[0].strip()
+          if ref_id not in indicator_ids and fallback_id:
+            field = "value"
+            if "." in raw:
+              _, field = raw.split(".", 1)
+            ev[key] = f"{fallback_id}.{field}"
+          elif ref_id in indicator_ids and "." in raw:
+            _, field = raw.split(".", 1)
+            if field.strip().lower() not in ("value",):
+              ev[key] = f"{ref_id}.value"
       if ev.get("op") in (None, ""):
         ev["op"] = "<"
       ev["a"] = None
@@ -535,7 +544,147 @@ def _normalize_event_shape(spec: dict[str, Any]) -> dict[str, Any]:
       ev["direction"] = None
       ev["value"] = None
 
+  # Normalize logic.then so action dispatch is always executable.
+  if isinstance(rules, list):
+    for rule in rules:
+      if not isinstance(rule, dict):
+        continue
+      then_raw = rule.get("then")
+      normalized_then: list[dict[str, str]] = []
+      if isinstance(then_raw, list):
+        for item in then_raw:
+          if isinstance(item, str) and item.strip():
+            normalized_then.append({"action_id": item.strip()})
+          elif isinstance(item, dict):
+            aid = str(item.get("action_id") or item.get("id") or "").strip()
+            if aid:
+              normalized_then.append({"action_id": aid})
+      if not normalized_then and action_ids:
+        normalized_then = [{"action_id": action_ids[0]}]
+      rule["then"] = normalized_then
+
+      when = rule.get("when")
+      if isinstance(when, dict):
+        all_conditions = when.get("all")
+        if isinstance(all_conditions, list):
+          for c in all_conditions:
+            if not isinstance(c, dict):
+              continue
+            ew = c.get("event_within")
+            if isinstance(ew, dict):
+              lb = ew.get("lookback")
+              if isinstance(lb, str) and "bar@" in lb and "bars@" not in lb:
+                ew["lookback"] = lb.replace("bar@", "bars@")
+
   return spec
+
+
+def _semantic_errors(spec: dict[str, Any]) -> list[str]:
+  errs: list[str] = []
+  dsl = spec.get("dsl")
+  if not isinstance(dsl, dict):
+    return ["dsl must be object"]
+  signal = dsl.get("signal")
+  logic = dsl.get("logic")
+  action = dsl.get("action")
+  if not isinstance(signal, dict) or not isinstance(logic, dict) or not isinstance(action, dict):
+    return ["dsl.signal/dsl.logic/dsl.action must be objects"]
+
+  indicators = signal.get("indicators")
+  events = signal.get("events")
+  rules = logic.get("rules")
+  actions = action.get("actions")
+  if not isinstance(indicators, list) or not isinstance(events, list):
+    errs.append("signal.indicators/events must be arrays")
+    return errs
+  if not isinstance(rules, list):
+    errs.append("logic.rules must be array")
+    return errs
+  if not isinstance(actions, list):
+    errs.append("action.actions must be array")
+    return errs
+
+  indicator_ids: set[str] = set()
+  action_ids: set[str] = set()
+  for ind in indicators:
+    if isinstance(ind, dict):
+      iid = str(ind.get("id") or "").strip()
+      if iid:
+        indicator_ids.add(iid)
+  for a in actions:
+    if isinstance(a, dict):
+      aid = str(a.get("id") or "").strip()
+      if aid:
+        action_ids.add(aid)
+
+  for ev in events:
+    if not isinstance(ev, dict):
+      continue
+    eid = str(ev.get("id") or "unknown")
+    et = str(ev.get("type") or "").upper()
+    if et in ("CROSS", "CROSS_DOWN", "CROSS_UP"):
+      for key in ("a", "b"):
+        raw = ev.get(key)
+        if not isinstance(raw, str) or "." not in raw:
+          errs.append(f"event[{eid}] {et} requires {key} as 'indicator_id.field'")
+          continue
+        rid = raw.split("@", 1)[0].split(".", 1)[0].strip()
+        if rid not in indicator_ids:
+          errs.append(f"event[{eid}] {key} indicator id '{rid}' not found")
+    if et == "THRESHOLD":
+      for key in ("left", "right"):
+        raw = ev.get(key)
+        if not isinstance(raw, str) or "." not in raw:
+          errs.append(f"event[{eid}] THRESHOLD requires {key} as 'indicator_id.value'")
+          continue
+        rid, field = raw.split("@", 1)[0].split(".", 1)
+        if rid.strip() not in indicator_ids:
+          errs.append(f"event[{eid}] {key} indicator id '{rid.strip()}' not found")
+        if field.strip() != "value":
+          errs.append(f"event[{eid}] {key} field must be 'value'")
+      if str(ev.get("op") or "") not in ("<", "<=", ">", ">=", "==", "!="):
+        errs.append(f"event[{eid}] THRESHOLD op invalid")
+
+  for r in rules:
+    if not isinstance(r, dict):
+      continue
+    rid = str(r.get("id") or "unknown")
+    then = r.get("then")
+    if not isinstance(then, list) or len(then) == 0:
+      errs.append(f"rule[{rid}] then must be non-empty array")
+      continue
+    for item in then:
+      if isinstance(item, str):
+        aid = item.strip()
+      elif isinstance(item, dict):
+        aid = str(item.get("action_id") or item.get("id") or "").strip()
+      else:
+        aid = ""
+      if not aid:
+        errs.append(f"rule[{rid}] then has empty action ref")
+      elif aid not in action_ids:
+        errs.append(f"rule[{rid}] then action_id '{aid}' not found in actions")
+
+  return errs
+
+
+def _build_repair_prompt(
+  nl_text: str,
+  mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
+  draft_spec: dict[str, Any],
+  semantic_errors: list[str],
+) -> str:
+  return (
+    f'User natural language strategy description: "{nl_text}"\n'
+    f'Additional context:\n- mode: "{mode}"\n\n'
+    "Your previous StrategySpec failed semantic validation for this execution engine.\n"
+    "Please fix ONLY the listed errors and return a full corrected StrategySpec JSON.\n"
+    "Keep hard rules unchanged.\n\n"
+    "Semantic errors:\n"
+    + "\n".join([f"- {e}" for e in semantic_errors[:20]])
+    + "\n\nPrevious StrategySpec JSON:\n"
+    + json.dumps(draft_spec, ensure_ascii=False)
+  )
 
 
 def build_default_mvp_spec(nl_text: str, mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"]) -> dict[str, Any]:
@@ -669,17 +818,36 @@ The output MUST include a fully runnable five-layer DSL:
   llm_used = False
 
   if llm_client.is_configured:
-    llm_spec = await llm_client.chat_json(
-      SYSTEM_PROMPT_V0,
-      user_prompt,
-      schema_name="strategy_spec",
-      json_schema=STRATEGY_SPEC_JSON_SCHEMA,
-      strict_schema=True,
-    )
-    if isinstance(llm_spec, dict):
-      spec = _deep_merge(base_spec, llm_spec)
-      spec = _normalize_event_shape(spec)
+    semantic_errors: list[str] = []
+    last_candidate: dict[str, Any] | None = None
+    accepted = False
+    for attempt in range(3):
+      prompt_for_attempt = user_prompt if attempt == 0 or last_candidate is None else _build_repair_prompt(nl_text, mode, last_candidate, semantic_errors)
+      llm_spec = await llm_client.chat_json(
+        SYSTEM_PROMPT_V0,
+        prompt_for_attempt,
+        schema_name="strategy_spec",
+        json_schema=STRATEGY_SPEC_JSON_SCHEMA,
+        strict_schema=True,
+      )
+      if not isinstance(llm_spec, dict):
+        continue
+      candidate = _deep_merge(base_spec, llm_spec)
+      semantic_errors = _semantic_errors(candidate)
+      last_candidate = candidate
       llm_used = True
+      if not semantic_errors:
+        spec = candidate
+        accepted = True
+        break
+
+    if not accepted and last_candidate is not None:
+      # Final fallback: one-time normalization, only when all repair attempts failed.
+      spec = _normalize_event_shape(last_candidate)
+      spec.setdefault("meta", {})
+      if isinstance(spec["meta"], dict):
+        spec["meta"]["semantic_repair_failed"] = True
+        spec["meta"]["semantic_errors"] = semantic_errors[:20]
   else:
     spec = _deep_merge(base_spec, fallback_seed)
 
