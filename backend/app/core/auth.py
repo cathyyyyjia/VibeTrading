@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import Header
+from fastapi import Request
 
 from app.core.config import settings
-from app.core.errors import AppError
+from app.core.errors import AppError, error_response
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -60,7 +60,36 @@ async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
   return claims
 
 
-async def get_auth_claims(authorization: str | None = Header(default=None)) -> tuple[str, dict[str, Any]]:
+def _is_public_path(path: str) -> bool:
+  return path.startswith("/api/health")
+
+
+async def attach_auth_claims(request: Request, call_next):
+  path = request.url.path
+  if request.method == "OPTIONS" or not path.startswith("/api/") or _is_public_path(path):
+    return await call_next(request)
+
+  token = _extract_bearer_token(request.headers.get("Authorization"))
+  if token is None:
+    return error_response("UNAUTHORIZED", "Missing bearer token", status=401)
+
+  try:
+    claims = await verify_supabase_userinfo(token)
+  except AppError as exc:
+    return error_response(exc.code, exc.message, exc.details, status=exc.http_status)
+
+  request.state.auth_claims = ("supabase", claims)
+  return await call_next(request)
+
+
+async def get_auth_claims(request: Request) -> tuple[str, dict[str, Any]]:
+  claims = getattr(request.state, "auth_claims", None)
+  if isinstance(claims, tuple) and len(claims) == 2:
+    provider, payload = claims
+    if isinstance(provider, str) and isinstance(payload, dict):
+      return provider, payload
+
+  authorization = request.headers.get("Authorization")
   token = _extract_bearer_token(authorization)
   if token is None:
     raise AppError("UNAUTHORIZED", "Missing bearer token", http_status=401)
