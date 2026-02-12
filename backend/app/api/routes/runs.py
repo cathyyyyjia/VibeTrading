@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from fastapi import Query
 from pydantic import BaseModel
 from fastapi.responses import ORJSONResponse
@@ -97,13 +97,13 @@ async def get_status(run_id: uuid.UUID, db: AsyncSession = Depends(get_db), clai
   return RunStatusResponse(run_id=str(run.id), state=run.state, progress=run.progress, steps=ws_steps, artifacts=art_refs)  # type: ignore[arg-type]
 
 
-@router.get("/{run_id}/report", response_model=BacktestReportResponse)
+@router.get("/{run_id}/report", response_model=None)
 async def get_report(
   run_id: uuid.UUID,
   db: AsyncSession = Depends(get_db),
   claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
   format: str | None = Query(default=None),
-) -> BacktestReportResponse | PlainTextResponse:
+) -> Response:
   await _get_user_owned_run(db, run_id, claims)
   art = (
     await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == "report.json"))
@@ -159,13 +159,13 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
   return RunHistoryResponse(history=out)
 
 
-@router.get("/{run_id}/artifacts/{name}")
+@router.get("/{run_id}/artifacts/{name}", response_model=None)
 async def get_artifact(
   run_id: uuid.UUID,
   name: str,
   db: AsyncSession = Depends(get_db),
   claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
-) -> ORJSONResponse | PlainTextResponse:
+) -> Response:
   await _get_user_owned_run(db, run_id, claims)
   art = (await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == name))).scalar_one_or_none()
   if art is None:
