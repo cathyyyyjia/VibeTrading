@@ -60,9 +60,11 @@ function DataSynthContent({ step }: { step: StepInfo }) {
 function BacktestContent({ progress, step }: { progress: number; step: StepInfo }) {
   const isRunning = step.status === 'running';
   const isDone = step.status === 'done';
-  const displayProgress = isDone ? 100 : progress;
   const latestProgressLog = [...step.logs].reverse().find((log) => log.includes('Backtesting '));
   const progressMatch = latestProgressLog?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
+  const runLog = step.logs.find((log) => log.includes('Running backtest'));
+  const startMatch = runLog?.match(/start_date\":\"(\d{4}-\d{2}-\d{2})\"/);
+  const displayProgress = isDone ? 100 : (progressMatch ? Number(progressMatch[4]) : progress);
 
   return (
     <div className="mt-2.5 space-y-2.5">
@@ -78,35 +80,15 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
           />
         </div>
       </div>
-      {progressMatch && (
-        <div className="text-xs text-muted-foreground">
-          Current date: {progressMatch[1]} ({progressMatch[2]}/{progressMatch[3]})
-        </div>
-      )}
-
-      <div className="space-y-1.5">
-        {step.logs.map((log, i) => {
-          const isError = log.startsWith('[ERROR]');
-          const logDone = !isError && (isDone || i < step.logs.length - 1);
-          const logRunning = !isError && isRunning && i === step.logs.length - 1;
-          
-          return (
-            <div key={i} className="flex items-center gap-2 text-xs">
-              {logDone ? (
-                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-              ) : logRunning ? (
-                <ChevronRight className="w-3.5 h-3.5 text-foreground shrink-0" />
-              ) : isError ? (
-                <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-              ) : (
-                <Circle className="w-3 h-3 text-muted-foreground/40 shrink-0" />
-              )}
-              <span className={`${isError ? 'text-red-500' : logDone ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>
-                {log.replace('[ERROR] ', '').replace('[DEBUG] ', '')}
-              </span>
-            </div>
-          );
-        })}
+      <div className="flex items-center gap-2 text-xs">
+        {isRunning ? (
+          <ChevronRight className="w-3.5 h-3.5 text-foreground shrink-0" />
+        ) : (
+          <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+        )}
+        <span className="text-muted-foreground">
+          Start {startMatch?.[1] || '-'} - Current {progressMatch?.[1] || '-'} - Completed {progressMatch ? `${progressMatch[2]}/${progressMatch[3]}` : '-'}
+        </span>
       </div>
     </div>
   );

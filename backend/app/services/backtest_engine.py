@@ -59,6 +59,23 @@ def _session_aligned_4h_segments(session_open: datetime, session_close: datetime
   return [(session_open, seg1_end), (seg1_end, session_close)]
 
 
+def _group_bars_by_session_date(
+  bars: list[MinuteBar],
+  session_open_by_date: dict[datetime.date, datetime],
+  session_close_by_date: dict[datetime.date, datetime],
+) -> dict[datetime.date, list[MinuteBar]]:
+  grouped: dict[datetime.date, list[MinuteBar]] = {}
+  for b in bars:
+    d = b.ts.date()
+    so = session_open_by_date.get(d)
+    sc = session_close_by_date.get(d)
+    if so is None or sc is None:
+      continue
+    if so <= b.ts <= sc:
+      grouped.setdefault(d, []).append(b)
+  return grouped
+
+
 async def run_backtest_from_spec(
   strategy_spec: dict[str, Any],
   start_date: str,
@@ -102,24 +119,57 @@ async def run_backtest_from_spec(
   daily_trade_close: list[float] = []
   daily_close_ts: list[datetime] = []
 
-  for session_idx, session in enumerate(sessions, start=1):
+  session_meta: list[dict[str, Any]] = []
+  session_open_by_date: dict[datetime.date, datetime] = {}
+  session_close_by_date: dict[datetime.date, datetime] = {}
+  for session in sessions:
     session_open = cal.session_open(session).to_pydatetime().replace(tzinfo=timezone.utc)
     session_close = cal.session_close(session).to_pydatetime().replace(tzinfo=timezone.utc)
-    decision_ts = session_close - timedelta(minutes=2)
+    d = session_close.date()
+    session_open_by_date[d] = session_open
+    session_close_by_date[d] = session_close
+    session_meta.append({"session_open": session_open, "session_close": session_close, "decision_ts": session_close - timedelta(minutes=2), "session_date": d})
 
-    bars_signal: list[MinuteBar] | None = None
+  trade_bars_all = await provider.get_minute_bars(trade_symbol, session_meta[0]["session_open"], session_meta[-1]["session_close"])
+  trade_bars_by_date = _group_bars_by_session_date(trade_bars_all, session_open_by_date, session_close_by_date)
+
+  signal_bars_cache: dict[str, dict[datetime.date, list[MinuteBar]]] = {}
+
+  async def _get_signal_bars_by_date(symbol: str) -> dict[datetime.date, list[MinuteBar]]:
+    cached = signal_bars_cache.get(symbol)
+    if cached is not None:
+      return cached
+    raw = await provider.get_minute_bars(symbol, session_meta[0]["session_open"], session_meta[-1]["session_close"])
+    grouped = _group_bars_by_session_date(raw, session_open_by_date, session_close_by_date)
+    signal_bars_cache[symbol] = grouped
+    return grouped
+
+  primary_signal_bars = await _get_signal_bars_by_date(resolved_signal_symbol)
+
+  for session_idx, meta in enumerate(session_meta, start=1):
+    session_open = meta["session_open"]
+    session_close = meta["session_close"]
+    decision_ts = meta["decision_ts"]
+    session_date = meta["session_date"]
+
+    bars_signal: list[MinuteBar] | None = primary_signal_bars.get(session_date)
     load_errors: list[str] = []
     chosen_signal = resolved_signal_symbol
-    for s in [resolved_signal_symbol] + [x for x in fallbacks if x != resolved_signal_symbol]:
-      try:
-        bars_signal = await provider.get_minute_bars(s, session_open, session_close)
-        chosen_signal = s
-        break
-      except Exception as e:
-        load_errors.append(f"{s}: {str(e)}")
-        continue
+    if not bars_signal:
+      for s in [resolved_signal_symbol] + [x for x in fallbacks if x != resolved_signal_symbol]:
+        try:
+          grouped = await _get_signal_bars_by_date(s)
+          candidate = grouped.get(session_date)
+          if candidate:
+            bars_signal = candidate
+            chosen_signal = s
+            break
+          load_errors.append(f"{s}: no bars")
+        except Exception as e:
+          load_errors.append(f"{s}: {str(e)}")
+          continue
 
-    if bars_signal is None:
+    if not bars_signal:
       skipped_sessions.append(
         {
           "session_date": session_close.date().isoformat(),
@@ -138,16 +188,16 @@ async def run_backtest_from_spec(
     if chosen_signal != resolved_signal_symbol:
       used_fallback = True
       resolved_signal_symbol = chosen_signal
+      primary_signal_bars = signal_bars_cache.get(resolved_signal_symbol, primary_signal_bars)
 
-    try:
-      bars_trade = await provider.get_minute_bars(trade_symbol, session_open, session_close)
-    except Exception as e:
+    bars_trade = trade_bars_by_date.get(session_date)
+    if not bars_trade:
       skipped_sessions.append(
         {
-          "session_date": session_close.date().isoformat(),
+          "session_date": session_date.isoformat(),
           "reason": "missing_trade_bars",
           "symbol": trade_symbol,
-          "errors": [str(e)],
+          "errors": ["no bars"],
         }
       )
       if progress_hook:
@@ -163,7 +213,7 @@ async def run_backtest_from_spec(
     if decision_bar_signal is None or close_bar_signal is None or close_bar_trade is None:
       skipped_sessions.append(
         {
-          "session_date": session_close.date().isoformat(),
+          "session_date": session_date.isoformat(),
           "reason": "missing_decision_or_close_bar",
           "session_open": session_open.isoformat(),
           "session_close": session_close.isoformat(),

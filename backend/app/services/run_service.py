@@ -160,24 +160,34 @@ async def execute_run(
 
       await _set_step_state(db, run_id, "backtest", "RUNNING", _log("INFO", "Running backtest", {"start_date": start_date, "end_date": end_date}))
       backtest_step = (await db.execute(select(RunStep).where(RunStep.run_id == run_id, RunStep.step_id == "backtest"))).scalar_one()
+      last_persisted = 0
 
       async def _on_backtest_progress(done: int, total: int, session_close: datetime) -> None:
+        nonlocal last_persisted
         if total <= 0:
           return
         progress_start = 50
         progress_end = 90
         ratio = min(max(done / total, 0.0), 1.0)
         target = progress_start + int((progress_end - progress_start) * ratio)
-        run.progress = max(run.progress, target)
+        should_persist = done == total or done == 1 or done - last_persisted >= 5
+        if not should_persist:
+          return
 
-        if done == 1 or done == total or done % 5 == 0:
-          pct = round(ratio * 100.0, 1)
-          progress_log = _log(
-            "INFO",
-            "Backtest progress",
-            {"session_date": session_close.date().isoformat(), "processed": done, "total": total, "pct": pct},
-          )
-          backtest_step.logs = [*(backtest_step.logs or [])[-80:], progress_log]
+        run.progress = max(run.progress, target)
+        pct = round(ratio * 100.0, 1)
+        progress_log = _log(
+          "INFO",
+          "Backtest progress",
+          {"session_date": session_close.date().isoformat(), "processed": done, "total": total, "pct": pct},
+        )
+        logs = list(backtest_step.logs or [])
+        if logs and isinstance(logs[-1], dict) and logs[-1].get("msg") == "Backtest progress":
+          logs[-1] = progress_log
+        else:
+          logs = [*logs[-20:], progress_log]
+        backtest_step.logs = logs
+        last_persisted = done
         await db.commit()
 
       result = await run_backtest_from_spec(spec, start_date=start_date, end_date=end_date, progress_hook=_on_backtest_progress)
