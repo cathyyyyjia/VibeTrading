@@ -104,17 +104,28 @@ async def run_backtest_from_spec(
     decision_ts = session_close - timedelta(minutes=2)
 
     bars_signal: list[MinuteBar] | None = None
+    load_errors: list[str] = []
     chosen_signal = resolved_signal_symbol
     for s in [resolved_signal_symbol] + [x for x in fallbacks if x != resolved_signal_symbol]:
       try:
         bars_signal = await provider.get_minute_bars(s, session_open, session_close)
         chosen_signal = s
         break
-      except Exception:
+      except Exception as e:
+        load_errors.append(f"{s}: {str(e)}")
         continue
 
     if bars_signal is None:
-      raise AppError("DATA_UNAVAILABLE", "Failed to load signal minute data", {"symbol": resolved_signal_symbol, "fallbacks": fallbacks})
+      raise AppError(
+        "DATA_UNAVAILABLE",
+        "Failed to load signal minute data",
+        {
+          "symbol": resolved_signal_symbol,
+          "fallbacks": fallbacks,
+          "session_date": session_close.date().isoformat(),
+          "errors": load_errors[-5:],
+        },
+      )
 
     if chosen_signal != resolved_signal_symbol:
       used_fallback = True

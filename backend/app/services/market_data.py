@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -131,14 +132,23 @@ class AlpacaProvider(MarketDataProvider):
         if next_page_token:
           params["page_token"] = next_page_token
 
-        resp = await client.get(f"{self._base_url}/v2/stocks/bars", params=params, headers=headers)
-        if resp.status_code >= 400:
+        resp: httpx.Response | None = None
+        for attempt in range(5):
+          resp = await client.get(f"{self._base_url}/v2/stocks/bars", params=params, headers=headers)
+          if resp.status_code < 400:
+            break
+          # Handle transient throttling/server errors with bounded retries.
+          if resp.status_code in (429, 500, 502, 503, 504) and attempt < 4:
+            await asyncio.sleep(min(0.5 * (2**attempt), 5.0))
+            continue
           raise AppError(
             "DATA_UNAVAILABLE",
             "Alpaca request failed",
             {"status": resp.status_code, "body": resp.text[:2000], "symbol": symbol},
             http_status=502,
           )
+        if resp is None:
+          raise AppError("DATA_UNAVAILABLE", "Alpaca request failed", {"symbol": symbol}, http_status=502)
         payload = resp.json()
         raw = (payload.get("bars") or {}).get(symbol) or []
         for r in raw:
