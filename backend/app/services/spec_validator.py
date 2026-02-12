@@ -86,13 +86,16 @@ def validate_strategy_spec_minimal(spec: dict[str, Any]) -> None:
   if offset != "-2m":
     raise AppError("VALIDATION_ERROR", "decision offset must be -2m", {"offset": offset})
 
-  dsl = spec.get("dsl") or {}
+  dsl_raw = spec.get("dsl") or {}
+  dsl = dsl_raw if isinstance(dsl_raw, dict) else {}
   for layer in ["atomic", "time", "signal", "logic", "action"]:
     if layer not in dsl:
       raise AppError("VALIDATION_ERROR", "DSL missing layer", {"layer": layer})
 
-  atomic = (dsl.get("atomic") or {})
-  constants = (atomic.get("constants") or {})
+  atomic_raw = dsl.get("atomic") or {}
+  atomic = atomic_raw if isinstance(atomic_raw, dict) else {}
+  constants_raw = atomic.get("constants") or {}
+  constants = constants_raw if isinstance(constants_raw, dict) else {}
   lookback = constants.get("lookback")
   if isinstance(lookback, str) and not _LOOKBACK_RE.match(lookback.replace(" ", "")):
     raise AppError("VALIDATION_ERROR", "lookback must include units", {"lookback": lookback})

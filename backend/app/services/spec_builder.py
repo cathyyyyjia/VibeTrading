@@ -45,6 +45,70 @@ Output instructions:
 - MUST be valid JSON, parsable, with no comments.
 """
 
+STRATEGY_SPEC_JSON_SCHEMA: dict[str, Any] = {
+  "type": "object",
+  "additionalProperties": True,
+  "required": [
+    "strategy_id",
+    "strategy_version",
+    "name",
+    "timezone",
+    "calendar",
+    "universe",
+    "decision",
+    "execution",
+    "risk",
+    "dsl",
+    "meta",
+  ],
+  "properties": {
+    "strategy_id": {"type": "string"},
+    "strategy_version": {"type": "string"},
+    "name": {"type": "string"},
+    "timezone": {"type": "string"},
+    "calendar": {"type": "object", "additionalProperties": True},
+    "universe": {"type": "object", "additionalProperties": True},
+    "decision": {"type": "object", "additionalProperties": True},
+    "execution": {"type": "object", "additionalProperties": True},
+    "risk": {"type": "object", "additionalProperties": True},
+    "dsl": {
+      "type": "object",
+      "additionalProperties": True,
+      "required": ["atomic", "time", "signal", "logic", "action"],
+      "properties": {
+        "atomic": {"type": "object", "additionalProperties": True},
+        "time": {"type": "object", "additionalProperties": True},
+        "signal": {
+          "type": "object",
+          "additionalProperties": True,
+          "required": ["indicators", "events"],
+          "properties": {
+            "indicators": {"type": "array"},
+            "events": {"type": "array"},
+          },
+        },
+        "logic": {
+          "type": "object",
+          "additionalProperties": True,
+          "required": ["rules"],
+          "properties": {
+            "rules": {"type": "array"},
+          },
+        },
+        "action": {
+          "type": "object",
+          "additionalProperties": True,
+          "required": ["actions"],
+          "properties": {
+            "actions": {"type": "array"},
+          },
+        },
+      },
+    },
+    "meta": {"type": "object", "additionalProperties": True},
+  },
+}
+
 
 def _canonical_json(obj: Any) -> str:
   return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -195,7 +259,13 @@ The output MUST include a fully runnable five-layer DSL:
   llm_used = False
 
   if llm_client.is_configured:
-    llm_spec = await llm_client.chat_json(SYSTEM_PROMPT_V0, user_prompt)
+    llm_spec = await llm_client.chat_json(
+      SYSTEM_PROMPT_V0,
+      user_prompt,
+      schema_name="strategy_spec",
+      json_schema=STRATEGY_SPEC_JSON_SCHEMA,
+      strict_schema=True,
+    )
     if isinstance(llm_spec, dict):
       spec = _deep_merge(base_spec, llm_spec)
       llm_used = True

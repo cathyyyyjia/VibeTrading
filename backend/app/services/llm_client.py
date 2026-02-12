@@ -19,16 +19,37 @@ class LlmClient:
   def is_configured(self) -> bool:
     return bool(self._api_key)
 
-  async def chat_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+  async def chat_json(
+    self,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    schema_name: str | None = None,
+    json_schema: dict[str, Any] | None = None,
+    strict_schema: bool = True,
+  ) -> dict[str, Any]:
     if not self._api_key:
       raise AppError("VALIDATION_ERROR", "LLM is not configured", {"missing": ["LLM_API_KEY"]}, http_status=400)
 
     url = f"{self._base_url}/chat/completions"
     headers = {"authorization": f"Bearer {self._api_key}", "content-type": "application/json"}
+    response_format: dict[str, Any]
+    if json_schema is not None:
+      response_format = {
+        "type": "json_schema",
+        "json_schema": {
+          "name": schema_name or "response_schema",
+          "strict": strict_schema,
+          "schema": json_schema,
+        },
+      }
+    else:
+      response_format = {"type": "json_object"}
+
     payload = {
       "model": self._model,
       "temperature": 0,
-      "response_format": {"type": "json_object"},
+      "response_format": response_format,
       "messages": [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
