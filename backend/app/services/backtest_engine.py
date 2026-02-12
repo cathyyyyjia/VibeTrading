@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+import math
 
 import exchange_calendars as xcals
 import numpy as np
@@ -76,6 +77,66 @@ def _group_bars_by_session_date(
   return grouped
 
 
+def _parse_lookback_days(raw: Any, default: int = 5) -> int:
+  if isinstance(raw, (int, float)):
+    return max(1, int(raw))
+  if not isinstance(raw, str):
+    return default
+  txt = raw.strip().lower()
+  if txt.endswith("d"):
+    txt = txt[:-1]
+  try:
+    return max(1, int(float(txt)))
+  except Exception:
+    return default
+
+
+def _normalize_ref(raw: str) -> tuple[str, str]:
+  clean = raw.split("@", 1)[0].strip()
+  if "." in clean:
+    left, right = clean.split(".", 1)
+    return left.strip(), right.strip()
+  return clean, "value"
+
+
+def _read_ref(raw: Any) -> str | None:
+  if isinstance(raw, str):
+    return raw
+  if isinstance(raw, dict):
+    candidate = raw.get("ref") or raw.get("value_ref") or raw.get("id")
+    if isinstance(candidate, str):
+      return candidate
+  return None
+
+
+def _safe_float(value: Any) -> float | None:
+  try:
+    v = float(value)
+    if math.isfinite(v):
+      return v
+  except Exception:
+    return None
+  return None
+
+
+def _compare(op: str, left: float | None, right: float | None) -> bool:
+  if left is None or right is None:
+    return False
+  if op == "<":
+    return left < right
+  if op == "<=":
+    return left <= right
+  if op == ">":
+    return left > right
+  if op == ">=":
+    return left >= right
+  if op == "==":
+    return abs(left - right) < 1e-12
+  if op == "!=":
+    return abs(left - right) >= 1e-12
+  return False
+
+
 async def run_backtest_from_spec(
   strategy_spec: dict[str, Any],
   start_date: str,
@@ -103,9 +164,6 @@ async def run_backtest_from_spec(
 
   slippage_bps = float((strategy_spec.get("execution") or {}).get("slippage_bps") or 0.0)
   commission_per_trade = float((strategy_spec.get("execution") or {}).get("commission_per_trade") or 0.0)
-  sell_fraction = float((((strategy_spec.get("dsl") or {}).get("atomic") or {}).get("constants") or {}).get("sell_fraction") or 0.3)
-  lookback_days = 5
-
   session_rows: list[dict[str, Any]] = []
   used_fallback = False
   resolved_signal_symbol = signal_symbol
@@ -208,9 +266,10 @@ async def run_backtest_from_spec(
       continue
 
     decision_bar_signal = _last_bar_at_or_before(bars_signal, decision_ts)
+    decision_bar_trade = _last_bar_at_or_before(bars_trade, decision_ts)
     close_bar_signal = _last_bar_at_or_before(bars_signal, session_close)
     close_bar_trade = _last_bar_at_or_before(bars_trade, session_close)
-    if decision_bar_signal is None or close_bar_signal is None or close_bar_trade is None:
+    if decision_bar_signal is None or decision_bar_trade is None or close_bar_signal is None or close_bar_trade is None:
       skipped_sessions.append(
         {
           "session_date": session_date.isoformat(),
@@ -244,7 +303,9 @@ async def run_backtest_from_spec(
         "session_close": session_close,
         "decision_ts": decision_ts,
         "decision_price_signal": float(decision_bar_signal.c),
+        "decision_price_trade": float(decision_bar_trade.c),
         "close_price_trade": float(close_bar_trade.c),
+        "close_price_signal": float(close_bar_signal.c),
       }
     )
     if progress_hook:
@@ -253,42 +314,12 @@ async def run_backtest_from_spec(
       except Exception:
         pass
 
-  macd_line, macd_sig = _macd(four_h_closes, 12, 26, 9)
-  cross_down = [_cross_down(macd_line, macd_sig, i) for i in range(len(four_h_closes))]
-  session_index_by_date = {ts.date(): idx for idx, ts in enumerate(daily_close_ts)}
-  cross_events_per_session = [0] * len(daily_close_ts)
-  for idx_4h, end_ts in enumerate(four_h_ends):
-    if not cross_down[idx_4h]:
-      continue
-    session_idx = session_index_by_date.get(end_ts.date())
-    if session_idx is not None:
-      cross_events_per_session[session_idx] += 1
-  cross_events_prefix: list[int] = []
-  running_cross_count = 0
-  for c in cross_events_per_session:
-    running_cross_count += c
-    cross_events_prefix.append(running_cross_count)
-
-  def has_cross_down_in_window(start_idx: int, end_idx: int) -> bool:
-    if end_idx < 0 or start_idx > end_idx or not cross_events_prefix:
-      return False
-    left = cross_events_prefix[start_idx - 1] if start_idx > 0 else 0
-    return (cross_events_prefix[end_idx] - left) > 0
-
   def last_closed_4h_idx(decision_ts: datetime) -> int | None:
     idx: int | None = None
-    for i, end_ts in enumerate(four_h_ends):
+    for j, end_ts in enumerate(four_h_ends):
       if end_ts <= decision_ts:
-        idx = i
+        idx = j
     return idx
-
-  def ma5_last_closed_1d(session_idx: int) -> float | None:
-    if session_idx < 5:
-      return None
-    window = daily_signal_close[session_idx - 5 : session_idx]
-    if len(window) < 5:
-      return None
-    return float(np.mean(window))
 
   if not daily_trade_close or not session_rows:
     raise AppError(
@@ -302,77 +333,334 @@ async def run_backtest_from_spec(
       },
     )
 
-  position_qty = 100.0
-  avg_cost = daily_trade_close[0]
-  cash = 0.0
-  initial_equity = position_qty * daily_trade_close[0]
+  dsl = strategy_spec.get("dsl") or {}
+  atomic = (dsl.get("atomic") or {})
+  signal_layer = (dsl.get("signal") or {})
+  logic_layer = (dsl.get("logic") or {})
+  action_layer = (dsl.get("action") or {})
+  constants = (atomic.get("constants") or {})
+  risk = strategy_spec.get("risk") or {}
+  default_cooldown = ((risk.get("cooldown") or {}).get("value")) if isinstance(risk.get("cooldown"), dict) else None
+
+  symbol_refs: dict[str, str] = {"signal": resolved_signal_symbol, "trade": trade_symbol}
+  raw_symbols = atomic.get("symbols")
+  if isinstance(raw_symbols, dict):
+    for key, val in raw_symbols.items():
+      if isinstance(key, str) and isinstance(val, str) and val.strip():
+        symbol_refs[key] = val.strip().upper()
+  elif isinstance(raw_symbols, list):
+    for item in raw_symbols:
+      if isinstance(item, dict):
+        name = item.get("name")
+        ticker = item.get("ticker")
+        if isinstance(name, str) and isinstance(ticker, str) and name.strip() and ticker.strip():
+          symbol_refs[name.strip()] = ticker.strip().upper()
+
+  def _daily_series(symbol_ref: str) -> list[float]:
+    resolved = symbol_refs.get(symbol_ref, resolved_signal_symbol)
+    return daily_trade_close if resolved == trade_symbol else daily_signal_close
+
+  idx4h_by_session: list[int | None] = [last_closed_4h_idx(row["decision_ts"]) for row in session_rows]
+  decision_indicator_values: list[dict[str, dict[str, float | None]]] = [{} for _ in session_rows]
+  indicator_4h_series: dict[str, dict[str, list[float]]] = {}
+
+  def _resolve_operand(operand: Any, session_idx: int) -> float | None:
+    if isinstance(operand, (int, float)):
+      return _safe_float(operand)
+    ref = _read_ref(operand)
+    if isinstance(ref, str):
+      ind_id, field = _normalize_ref(ref)
+      bucket = decision_indicator_values[session_idx].get(ind_id) or {}
+      return _safe_float(bucket.get(field))
+    if isinstance(operand, dict):
+      return _safe_float(operand.get("value"))
+    return None
+
+  indicators = signal_layer.get("indicators") if isinstance(signal_layer, dict) else None
+  if isinstance(indicators, list):
+    for ind in indicators:
+      if not isinstance(ind, dict):
+        continue
+      ind_id = str(ind.get("id") or "").strip()
+      if not ind_id:
+        continue
+      ind_type = str(ind.get("type") or "").strip().upper()
+      tf = str(ind.get("tf") or "").strip().lower()
+      symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+      params = ind.get("params") or {}
+      if not isinstance(params, dict):
+        params = {}
+
+      values: dict[str, float | None]
+      if ind_type == "MACD" and tf == "4h":
+        fast = int(params.get("fast") or 12)
+        slow = int(params.get("slow") or 26)
+        signal_n = int(params.get("signal") or 9)
+        macd_line, signal_line = _macd(four_h_closes, fast, slow, signal_n)
+        indicator_4h_series[ind_id] = {"macd": macd_line, "signal": signal_line}
+        for i, idx4h in enumerate(idx4h_by_session):
+          values = {"macd": None, "signal": None, "value": None}
+          if idx4h is not None and idx4h < len(macd_line):
+            values["macd"] = float(macd_line[idx4h])
+            values["signal"] = float(signal_line[idx4h]) if idx4h < len(signal_line) else None
+            values["value"] = values["macd"]
+          decision_indicator_values[i][ind_id] = values
+      elif ind_type in ("SMA", "MA") and tf == "1d":
+        window = _parse_lookback_days(params.get("window") or constants.get("lookback"), default=5)
+        series = _daily_series(symbol_ref)
+        for i in range(len(session_rows)):
+          val: float | None = None
+          if i >= window and i <= len(series):
+            val = float(np.mean(series[i - window : i]))
+          decision_indicator_values[i][ind_id] = {"value": val}
+      elif ind_type == "CLOSE":
+        for i, row in enumerate(session_rows):
+          val: float | None = None
+          if tf == "1m":
+            val = float(row["decision_price_trade"] if symbol_refs.get(symbol_ref) == trade_symbol else row["decision_price_signal"])
+          elif tf == "1d":
+            series = _daily_series(symbol_ref)
+            if i > 0 and i - 1 < len(series):
+              val = float(series[i - 1])
+          elif tf == "4h":
+            idx4h = idx4h_by_session[i]
+            if idx4h is not None and idx4h < len(four_h_closes):
+              val = float(four_h_closes[idx4h])
+          decision_indicator_values[i][ind_id] = {"value": val}
+
+  event_hits: dict[str, list[bool]] = {}
+  events = signal_layer.get("events") if isinstance(signal_layer, dict) else None
+  if isinstance(events, list):
+    for ev in events:
+      if not isinstance(ev, dict):
+        continue
+      event_id = str(ev.get("id") or "").strip()
+      if not event_id:
+        continue
+      event_type = str(ev.get("type") or "").strip().upper()
+      hits = [False] * len(session_rows)
+      if event_type in ("CROSS_DOWN", "CROSS_UP", "CROSS"):
+        direction = str(ev.get("direction") or "").upper()
+        if event_type == "CROSS_DOWN":
+          direction = "DOWN"
+        elif event_type == "CROSS_UP":
+          direction = "UP"
+        if direction not in ("UP", "DOWN", "ANY"):
+          direction = "DOWN"
+        a_ref = _read_ref(ev.get("a")) or _read_ref(ev.get("left")) or ""
+        b_ref = _read_ref(ev.get("b")) or _read_ref(ev.get("right")) or ""
+        a_id, a_field = _normalize_ref(a_ref)
+        b_id, b_field = _normalize_ref(b_ref)
+        a_series = (indicator_4h_series.get(a_id) or {}).get(a_field)
+        b_series = (indicator_4h_series.get(b_id) or {}).get(b_field)
+        if isinstance(a_series, list) and isinstance(b_series, list):
+          for i, idx4h in enumerate(idx4h_by_session):
+            if idx4h is None or idx4h <= 0 or idx4h >= len(a_series) or idx4h >= len(b_series):
+              continue
+            a_prev, a_cur = a_series[idx4h - 1], a_series[idx4h]
+            b_prev, b_cur = b_series[idx4h - 1], b_series[idx4h]
+            cross_down = a_prev >= b_prev and a_cur < b_cur
+            cross_up = a_prev <= b_prev and a_cur > b_cur
+            if direction == "DOWN":
+              hits[i] = cross_down
+            elif direction == "UP":
+              hits[i] = cross_up
+            else:
+              hits[i] = cross_down or cross_up
+      elif event_type == "THRESHOLD":
+        op = str(ev.get("op") or ev.get("operator") or "<").strip()
+        left_ref = _read_ref(ev.get("left")) or ""
+        right_ref = _read_ref(ev.get("right"))
+        right_const = _safe_float(ev.get("value") if right_ref is None else None)
+        for i in range(len(session_rows)):
+          left_v = _resolve_operand(left_ref, i) if left_ref else None
+          right_v = _resolve_operand(right_ref, i) if right_ref else right_const
+          hits[i] = _compare(op, left_v, right_v)
+      event_hits[event_id] = hits
+
+  def _eval_condition(cond: Any, session_idx: int) -> bool:
+    if not isinstance(cond, dict):
+      return False
+    if "all" in cond and isinstance(cond.get("all"), list):
+      return all(_eval_condition(c, session_idx) for c in cond["all"])
+    if "any" in cond and isinstance(cond.get("any"), list):
+      return any(_eval_condition(c, session_idx) for c in cond["any"])
+    if "event_within" in cond and isinstance(cond.get("event_within"), dict):
+      ev_info = cond["event_within"]
+      event_id = str(ev_info.get("event_id") or "")
+      hits = event_hits.get(event_id) or []
+      if not hits:
+        return False
+      lookback = _parse_lookback_days(ev_info.get("lookback") or constants.get("lookback"), default=5)
+      start_idx = max(0, session_idx - lookback + 1)
+      return any(hits[start_idx : session_idx + 1])
+    if isinstance(cond.get("event_id"), str):
+      event_id = str(cond.get("event_id"))
+      hits = event_hits.get(event_id) or []
+      if not hits:
+        return False
+      scope = str(cond.get("scope") or "").upper()
+      if scope in ("LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", "BAR", ""):
+        return bool(hits[session_idx]) if session_idx < len(hits) else False
+      lookback = _parse_lookback_days(scope if scope else constants.get("lookback"), default=1)
+      start_idx = max(0, session_idx - lookback + 1)
+      return any(hits[start_idx : session_idx + 1])
+    if "lt" in cond and isinstance(cond.get("lt"), dict):
+      left = _resolve_operand(cond["lt"].get("a"), session_idx)
+      right = _resolve_operand(cond["lt"].get("b"), session_idx)
+      return left is not None and right is not None and left < right
+    if "gt" in cond and isinstance(cond.get("gt"), dict):
+      left = _resolve_operand(cond["gt"].get("a"), session_idx)
+      right = _resolve_operand(cond["gt"].get("b"), session_idx)
+      return left is not None and right is not None and left > right
+    if isinstance(cond.get("op"), str):
+      op = str(cond.get("op"))
+      left = _resolve_operand(cond.get("left"), session_idx)
+      right = _resolve_operand(cond.get("right"), session_idx)
+      return _compare(op, left, right)
+    return False
+
+  action_map: dict[str, dict[str, Any]] = {}
+  raw_actions = action_layer.get("actions") if isinstance(action_layer, dict) else None
+  if isinstance(raw_actions, list):
+    for action in raw_actions:
+      if isinstance(action, dict):
+        action_id = str(action.get("id") or "").strip()
+        if action_id:
+          action_map[action_id] = action
+
+  initial_position_qty = max(0.0, float(constants.get("initial_position_qty") or 100.0))
+  initial_cash = max(0.0, float(constants.get("initial_cash") or 0.0))
+  if initial_position_qty <= 0 and initial_cash <= 0:
+    initial_cash = 10000.0
+
+  position_qty = initial_position_qty
+  avg_cost = daily_trade_close[0] if position_qty > 0 else 0.0
+  cash = initial_cash
+  initial_equity = cash + position_qty * daily_trade_close[0]
 
   trades: list[dict[str, Any]] = []
   equity: list[dict[str, Any]] = []
-
-  cooldown_until_session_idx: int = -1
+  action_last_exec: dict[str, int] = {}
+  rules = logic_layer.get("rules") if isinstance(logic_layer, dict) else None
+  rules_list = rules if isinstance(rules, list) else []
 
   for i, row in enumerate(session_rows):
     session_close = row["session_close"]
     decision_ts = row["decision_ts"]
-    decision_px = float(row["decision_price_signal"])
-    fill_px_raw = float(row["close_price_trade"])
+    session_equity_px = float(row["close_price_trade"])
+    equity.append({"t": session_close, "v": float(cash + position_qty * session_equity_px)})
 
-    equity.append({"t": session_close, "v": float(cash + position_qty * fill_px_raw)})
+    for rule in rules_list:
+      if not isinstance(rule, dict):
+        continue
+      rule_id = str(rule.get("id") or "rule")
+      when_block = rule.get("when") or {}
+      if not _eval_condition(when_block, i):
+        continue
+      then_actions = rule.get("then") if isinstance(rule.get("then"), list) else []
+      for action_item in then_actions:
+        if isinstance(action_item, dict):
+          action_id = str(action_item.get("action_id") or action_item.get("id") or "").strip()
+        else:
+          action_id = str(action_item or "").strip()
+        if not action_id:
+          continue
+        action = action_map.get(action_id)
+        if not action:
+          continue
 
-    if i <= cooldown_until_session_idx:
-      continue
+        cooldown_days = _parse_lookback_days(action.get("cooldown") or default_cooldown, default=1)
+        last_idx = action_last_exec.get(action_id)
+        if last_idx is not None and i - last_idx < cooldown_days:
+          continue
 
-    ma5 = ma5_last_closed_1d(i)
-    if ma5 is None:
-      continue
+        side = str(action.get("side") or "SELL").upper()
+        symbol_ref = str(action.get("symbol_ref") or "trade")
+        symbol = symbol_refs.get(symbol_ref, trade_symbol)
+        is_trade_symbol = symbol == trade_symbol
+        fill_px_raw = float(row["close_price_trade"] if is_trade_symbol else row["close_price_signal"])
 
-    idx4h = last_closed_4h_idx(decision_ts)
-    if idx4h is None:
-      continue
+        qty_cfg = action.get("qty") if isinstance(action.get("qty"), dict) else {}
+        mode = str((qty_cfg or {}).get("mode") or (qty_cfg or {}).get("type") or "FRACTION_OF_POSITION").upper()
+        qty_val = _safe_float((qty_cfg or {}).get("value"))
+        if qty_val is None:
+          qty_val = 0.0
 
-    lookback_start = max(0, i - lookback_days + 1)
-    event_ok = has_cross_down_in_window(lookback_start, i)
+        qty = 0.0
+        if side == "SELL":
+          if mode == "FRACTION_OF_POSITION":
+            qty = float(int(position_qty * qty_val))
+          elif mode in ("FIXED", "FIXED_SHARES", "SHARES", "ABSOLUTE"):
+            qty = float(int(qty_val))
+          elif mode == "NOTIONAL_USD":
+            qty = float(int(max(qty_val, 0.0) / fill_px_raw)) if fill_px_raw > 0 else 0.0
+          else:
+            qty = float(int(qty_val))
+          qty = min(qty, position_qty)
+        elif side == "BUY":
+          if mode in ("FRACTION_OF_CASH", "FRACTION_OF_EQUITY"):
+            budget = cash * max(0.0, qty_val)
+            qty = float(int(budget / fill_px_raw)) if fill_px_raw > 0 else 0.0
+          elif mode == "NOTIONAL_USD":
+            qty = float(int(max(qty_val, 0.0) / fill_px_raw)) if fill_px_raw > 0 else 0.0
+          elif mode in ("ABSOLUTE", "FIXED", "FIXED_SHARES", "SHARES"):
+            qty = float(int(qty_val))
+          elif mode == "FRACTION_OF_POSITION":
+            qty = float(int(max(position_qty, 1.0) * qty_val))
+          else:
+            qty = float(int(qty_val))
+        if qty < 1:
+          continue
 
-    state_ok = decision_px < ma5
-    if not (event_ok and state_ok):
-      continue
+        if side == "SELL":
+          fill_px = fill_px_raw * (1.0 - (slippage_bps / 10000.0))
+          proceeds = qty * fill_px - commission_per_trade
+          realized = (fill_px - avg_cost) * qty if avg_cost > 0 else 0.0
+          pnl_pct = ((fill_px / avg_cost) - 1.0) * 100.0 if avg_cost > 0 else 0.0
+          cash += proceeds
+          position_qty -= qty
+          if position_qty < 1e-9:
+            position_qty = 0.0
+          trade_pnl = float(realized)
+          trade_pnl_pct = float(pnl_pct)
+        else:
+          fill_px = fill_px_raw * (1.0 + (slippage_bps / 10000.0))
+          total_cost = qty * fill_px + commission_per_trade
+          if total_cost > cash:
+            max_qty = float(int(max((cash - commission_per_trade), 0.0) / fill_px)) if fill_px > 0 else 0.0
+            qty = max_qty
+            if qty < 1:
+              continue
+            total_cost = qty * fill_px + commission_per_trade
+          prev_pos = position_qty
+          cash -= total_cost
+          position_qty += qty
+          avg_cost = ((avg_cost * prev_pos) + (fill_px * qty)) / position_qty if position_qty > 0 else 0.0
+          trade_pnl = None
+          trade_pnl_pct = None
 
-    qty = float(int(position_qty * sell_fraction))
-    if qty < 1:
-      continue
-
-    slip_mult = 1.0 - (slippage_bps / 10000.0)
-    fill_px = fill_px_raw * slip_mult
-    proceeds = qty * fill_px - commission_per_trade
-    realized = (fill_px - avg_cost) * qty
-    pnl_pct = ((fill_px / avg_cost) - 1.0) * 100.0 if avg_cost > 0 else 0.0
-
-    cash += proceeds
-    position_qty -= qty
-
-    trades.append(
-      {
-        "decision_time": decision_ts,
-        "fill_time": session_close,
-        "symbol": trade_symbol,
-        "side": "SELL",
-        "qty": qty,
-        "fill_price": float(fill_px),
-        "cost": {"slippage_bps": slippage_bps, "commission_per_trade": commission_per_trade},
-        "why": {
-          "macd_4h_cross": True,
-          "close_15_58": decision_px,
-          "ma5_last_closed": ma5,
-          "signal_symbol": resolved_signal_symbol,
-          "is_fallback": used_fallback,
-        },
-        "pnl": float(realized),
-        "pnl_pct": float(pnl_pct),
-      }
-    )
-
-    cooldown_until_session_idx = i + 1
+        action_last_exec[action_id] = i
+        trades.append(
+          {
+            "decision_time": decision_ts,
+            "fill_time": session_close,
+            "symbol": symbol,
+            "side": side,
+            "qty": qty,
+            "fill_price": float(fill_px),
+            "cost": {"slippage_bps": slippage_bps, "commission_per_trade": commission_per_trade},
+            "why": {
+              "rule_id": rule_id,
+              "action_id": action_id,
+              "signal_symbol": resolved_signal_symbol,
+              "is_fallback": used_fallback,
+              "indicators": decision_indicator_values[i],
+            },
+            "pnl": trade_pnl,
+            "pnl_pct": trade_pnl_pct,
+          }
+        )
 
   final_equity = float(cash + position_qty * daily_trade_close[-1])
   returns = []

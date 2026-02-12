@@ -145,7 +145,16 @@ async def execute_run(
         run_id,
         "parse",
         "DONE",
-        _log("INFO", "StrategySpec ready", {"strategy_version": strategy.strategy_version, "model": settings.llm_model}),
+        _log(
+          "INFO",
+          "StrategySpec ready",
+          {
+            "strategy_version": strategy.strategy_version,
+            "model": settings.llm_model,
+            "llm_used": bool((spec.get("meta") or {}).get("llm_used")),
+            "fallback_seed_applied": bool((spec.get("meta") or {}).get("fallback_seed_applied")),
+          },
+        ),
       )
 
       await _set_step_state(db, run_id, "plan", "RUNNING", _log("INFO", "Building execution plan"))

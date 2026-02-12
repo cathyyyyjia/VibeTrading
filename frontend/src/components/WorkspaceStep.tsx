@@ -1,6 +1,5 @@
 // ============================================================
 // WorkspaceStep - Individual step card in AI Workspace
-// Design: Swiss Precision - vertical timeline, status icons, details
 // ============================================================
 
 import { useState } from 'react';
@@ -58,16 +57,26 @@ function DataSynthContent({ step }: { step: StepInfo }) {
 }
 
 function ParseContent({ step }: { step: StepInfo }) {
-  const latestLog = step.logs[step.logs.length - 1] || "";
-  const modelMatch = latestLog.match(/"model":"([^"]+)"/);
-  const model = modelMatch?.[1];
+  const latestLog = step.logs[step.logs.length - 1] || '';
+  const model = latestLog.match(/"model":"([^"]+)"/)?.[1];
+  const llmUsed = latestLog.match(/"llm_used":(true|false)/)?.[1];
+  const fallbackApplied = latestLog.match(/"fallback_seed_applied":(true|false)/)?.[1];
+  const llmUsedLabel = llmUsed === 'true' ? 'Yes' : llmUsed === 'false' ? 'No' : '-';
+  const fallbackLabel = fallbackApplied === 'true' ? 'Yes' : fallbackApplied === 'false' ? 'No' : '-';
+
   return (
     <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-foreground">LLM Model</span>
-      </div>
-      <div className="text-xs text-muted-foreground">
-        {model ? model : "Loading model info..."}
+      <div className="text-xs font-medium text-foreground mb-2">Parse Metadata</div>
+      <div className="space-y-1">
+        <div className="text-xs text-muted-foreground">
+          LLM Model: <span className="text-foreground">{model || '-'}</span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          LLM Driven: <span className="text-foreground">{llmUsedLabel}</span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Fallback Seed: <span className="text-foreground">{fallbackLabel}</span>
+        </div>
       </div>
     </div>
   );
@@ -80,10 +89,10 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
   const progressMatch = latestProgressLog?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
   const displayProgress = isDone ? 100 : (progressMatch ? Number(progressMatch[4]) : progress);
   const progressText = isDone
-    ? '已完成'
+    ? 'Completed'
     : progressMatch?.[1]
-      ? `正在进行中... 正在处理${progressMatch[1]}`
-      : '开始运行';
+      ? `Running... processing ${progressMatch[1]}`
+      : 'Started';
 
   return (
     <div className="mt-2.5 space-y-2.5">
@@ -105,9 +114,7 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
         ) : (
           <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
         )}
-        <span className="text-muted-foreground">
-          {progressText}
-        </span>
+        <span className="text-muted-foreground">{progressText}</span>
       </div>
     </div>
   );
@@ -144,7 +151,6 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
   const isData = step.key === 'data';
   const isBacktest = step.key === 'backtest';
 
-  // Localized step titles
   const stepTitleMap: Record<string, string> = {
     parse: 'PARSE',
     plan: 'PLAN',
@@ -179,7 +185,6 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
           }
         `}
       >
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <StatusIcon status={step.status} />
@@ -193,7 +198,7 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
             )}
             {step.status === 'running' && (
               <span className="text-[10px] font-bold text-white bg-emerald-500 px-2 py-0.5 rounded-full">
-                {statusLabelMap['running']}
+                {statusLabelMap.running}
               </span>
             )}
           </div>

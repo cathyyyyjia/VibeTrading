@@ -143,14 +143,70 @@ Additional context:
 - mode: "{mode}"
 Task:
 Return ONLY the JSON of StrategySpec. The JSON MUST be syntactically valid.
+The output MUST include a fully runnable five-layer DSL:
+- dsl.atomic
+- dsl.time
+- dsl.signal (indicators + events)
+- dsl.logic (rules)
+- dsl.action (actions)
 """
-  base_spec = build_default_mvp_spec(nl_text, mode)
+
+  def _minimal_base_spec() -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+      "strategy_id": "stg_auto_v0",
+      "strategy_version": "",
+      "name": (nl_text[:80] + "...") if len(nl_text) > 80 else nl_text,
+      "timezone": "America/New_York",
+      "calendar": {"type": "exchange", "value": "XNYS"},
+      "universe": {
+        "signal_symbol": "QQQ",
+        "signal_symbol_fallbacks": ["NDX", "QQQ"],
+        "trade_symbol": "TQQQ",
+      },
+      "decision": {"decision_time_rule": {"type": "MARKET_CLOSE_OFFSET", "offset": "-2m"}},
+      "execution": {"model": "MOC", "slippage_bps": 2, "commission_per_share": 0.0, "commission_per_trade": 0.0},
+      "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 1},
+      "dsl": {
+        "atomic": {},
+        "time": {"primary_tf": "1m", "derived_tfs": ["4h", "1d"]},
+        "signal": {"indicators": [], "events": []},
+        "logic": {"rules": []},
+        "action": {"actions": []},
+      },
+      "meta": {"created_at": now, "author": "nl_user", "notes": "", "mode": mode},
+    }
+
+  def _is_runnable(spec: dict[str, Any]) -> bool:
+    dsl = spec.get("dsl")
+    if not isinstance(dsl, dict):
+      return False
+    signal = dsl.get("signal") if isinstance(dsl.get("signal"), dict) else {}
+    logic = dsl.get("logic") if isinstance(dsl.get("logic"), dict) else {}
+    action = dsl.get("action") if isinstance(dsl.get("action"), dict) else {}
+    indicators = signal.get("indicators") if isinstance(signal, dict) else None
+    rules = logic.get("rules") if isinstance(logic, dict) else None
+    actions = action.get("actions") if isinstance(action, dict) else None
+    return isinstance(indicators, list) and len(indicators) > 0 and isinstance(rules, list) and len(rules) > 0 and isinstance(actions, list) and len(actions) > 0
+
+  base_spec = _minimal_base_spec()
+  fallback_seed = build_default_mvp_spec(nl_text, mode)
   spec: dict[str, Any] = dict(base_spec)
+  llm_used = False
 
   if llm_client.is_configured:
     llm_spec = await llm_client.chat_json(SYSTEM_PROMPT_V0, user_prompt)
     if isinstance(llm_spec, dict):
       spec = _deep_merge(base_spec, llm_spec)
+      llm_used = True
+  else:
+    spec = _deep_merge(base_spec, fallback_seed)
+
+  if not _is_runnable(spec):
+    spec = _deep_merge(fallback_seed, spec)
+    spec.setdefault("meta", {})
+    if isinstance(spec["meta"], dict):
+      spec["meta"]["fallback_seed_applied"] = True
 
   if overrides and isinstance(overrides, dict):
     spec = _deep_merge(spec, overrides)
@@ -160,6 +216,10 @@ Return ONLY the JSON of StrategySpec. The JSON MUST be syntactically valid.
 
   if not isinstance(spec.get("strategy_id"), str) or not spec["strategy_id"].strip():
     spec["strategy_id"] = f"stg_{compute_strategy_version({k: v for k, v in spec.items() if k != 'strategy_version'})[:12]}"
+
+  spec.setdefault("meta", {})
+  if isinstance(spec["meta"], dict):
+    spec["meta"]["llm_used"] = llm_used
 
   spec["strategy_version"] = compute_strategy_version({k: v for k, v in spec.items() if k != "strategy_version"})
   spec = enforce_hard_rules(spec)
