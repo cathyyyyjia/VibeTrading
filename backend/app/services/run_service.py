@@ -223,6 +223,14 @@ async def execute_run(
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Generating report"))
       report = jsonable_encoder({"kpis": result.kpis, "equity": result.equity, "trades": result.trades})
       await _upsert_artifact(db, run_id, "report.json", "json", f"/api/runs/{run_id}/report", content=report)
+      await _upsert_artifact(
+        db,
+        run_id,
+        "kpis.json",
+        "json",
+        f"/api/runs/{run_id}/artifacts/kpis.json",
+        content={"kpis": result.kpis},
+      )
       report_md = f"# Backtest Report\n\n- Trades: {len(result.trades)}\n- Return%: {result.kpis.get('return_pct'):.2f}\n- Sharpe: {result.kpis.get('sharpe'):.2f}\n- MaxDD%: {result.kpis.get('max_dd_pct'):.2f}\n"
       await _upsert_artifact(db, run_id, "report.md", "markdown", f"/api/runs/{run_id}/artifacts/report.md", content={"markdown": report_md})
       await _upsert_artifact(db, run_id, "equity.png", "image", f"/api/runs/{run_id}/artifacts/equity.png", content=None)

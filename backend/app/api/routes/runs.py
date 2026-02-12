@@ -139,26 +139,46 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
     await db.execute(select(Strategy).where(Strategy.id.in_(strategy_ids)))
   ).scalars().all()
   strategy_by_id = {s.id: s for s in strategies}
-  artifacts = (
-    await db.execute(select(RunArtifact).where(RunArtifact.run_id.in_(run_ids)))
-  ).scalars().all()
-  artifacts_by_run_id: dict[uuid.UUID, list[RunArtifact]] = {}
-  for artifact in artifacts:
-    artifacts_by_run_id.setdefault(artifact.run_id, []).append(artifact)
+
+  artifact_rows = (
+    await db.execute(
+      select(RunArtifact.run_id, RunArtifact.name, RunArtifact.uri).where(RunArtifact.run_id.in_(run_ids))
+    )
+  ).all()
+  artifacts_by_run_id: dict[uuid.UUID, dict[str, str]] = {}
+  for run_id_value, name, uri in artifact_rows:
+    artifacts_by_run_id.setdefault(run_id_value, {})[name] = uri
+
+  kpis_rows = (
+    await db.execute(
+      select(RunArtifact.run_id, RunArtifact.name, RunArtifact.content).where(
+        RunArtifact.run_id.in_(run_ids),
+        RunArtifact.name.in_(["kpis.json", "report.json"]),
+      )
+    )
+  ).all()
+  kpis_by_run_id: dict[uuid.UUID, BacktestKpis | None] = {}
+  for run_id_value, name, content in kpis_rows:
+    if run_id_value in kpis_by_run_id and kpis_by_run_id[run_id_value] is not None:
+      continue
+    if not isinstance(content, dict):
+      continue
+    try:
+      if name == "kpis.json":
+        raw = content.get("kpis")
+      else:
+        raw = content.get("kpis")
+      if isinstance(raw, dict):
+        kpis_by_run_id[run_id_value] = BacktestKpis.model_validate(raw)
+    except Exception:
+      if run_id_value not in kpis_by_run_id:
+        kpis_by_run_id[run_id_value] = None
 
   out: list[RunHistoryEntry] = []
   for r in runs:
     strategy = strategy_by_id.get(r.strategy_id)
-    run_artifacts = artifacts_by_run_id.get(r.id, [])
-    artifact_map = {a.name: a.uri for a in run_artifacts}
-
-    kpis: BacktestKpis | None = None
-    report = next((a for a in run_artifacts if a.name == "report.json" and a.content is not None), None)
-    if report is not None:
-      try:
-        kpis = BacktestKpis.model_validate(report.content.get("kpis"))
-      except Exception:
-        kpis = None
+    artifact_map = artifacts_by_run_id.get(r.id, {})
+    kpis = kpis_by_run_id.get(r.id)
 
     out.append(
       RunHistoryEntry(
