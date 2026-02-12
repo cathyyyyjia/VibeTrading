@@ -90,6 +90,8 @@ async def run_backtest_from_spec(
   session_rows: list[dict[str, Any]] = []
   used_fallback = False
   resolved_signal_symbol = signal_symbol
+  total_sessions = len(sessions)
+  skipped_sessions: list[dict[str, Any]] = []
 
   four_h_ends: list[datetime] = []
   four_h_closes: list[float] = []
@@ -116,32 +118,46 @@ async def run_backtest_from_spec(
         continue
 
     if bars_signal is None:
-      raise AppError(
-        "DATA_UNAVAILABLE",
-        "Failed to load signal minute data",
+      skipped_sessions.append(
         {
-          "symbol": resolved_signal_symbol,
-          "fallbacks": fallbacks,
           "session_date": session_close.date().isoformat(),
+          "reason": "missing_signal_bars",
+          "symbol": resolved_signal_symbol,
           "errors": load_errors[-5:],
-        },
+        }
       )
+      continue
 
     if chosen_signal != resolved_signal_symbol:
       used_fallback = True
       resolved_signal_symbol = chosen_signal
 
-    bars_trade = await provider.get_minute_bars(trade_symbol, session_open, session_close)
+    try:
+      bars_trade = await provider.get_minute_bars(trade_symbol, session_open, session_close)
+    except Exception as e:
+      skipped_sessions.append(
+        {
+          "session_date": session_close.date().isoformat(),
+          "reason": "missing_trade_bars",
+          "symbol": trade_symbol,
+          "errors": [str(e)],
+        }
+      )
+      continue
 
     decision_bar_signal = _last_bar_at_or_before(bars_signal, decision_ts)
     close_bar_signal = _last_bar_at_or_before(bars_signal, session_close)
     close_bar_trade = _last_bar_at_or_before(bars_trade, session_close)
     if decision_bar_signal is None or close_bar_signal is None or close_bar_trade is None:
-      raise AppError(
-        "DATA_UNAVAILABLE",
-        "Missing minute bars for decision/close timestamp",
-        {"session_open": session_open.isoformat(), "session_close": session_close.isoformat()},
+      skipped_sessions.append(
+        {
+          "session_date": session_close.date().isoformat(),
+          "reason": "missing_decision_or_close_bar",
+          "session_open": session_open.isoformat(),
+          "session_close": session_close.isoformat(),
+        }
       )
+      continue
 
     daily_signal_close.append(float(close_bar_signal.c))
     daily_trade_close.append(float(close_bar_trade.c))
@@ -182,6 +198,18 @@ async def run_backtest_from_spec(
     if len(window) < 5:
       return None
     return float(np.mean(window))
+
+  if not daily_trade_close or not session_rows:
+    raise AppError(
+      "DATA_UNAVAILABLE",
+      "Insufficient market data for requested range",
+      {
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_sessions": total_sessions,
+        "skipped_sessions": skipped_sessions[:20],
+      },
+    )
 
   position_qty = 100.0
   avg_cost = daily_trade_close[0]
@@ -306,7 +334,14 @@ async def run_backtest_from_spec(
       "execution": {"model": "MOC"},
       "fallback": {"is_fallback": used_fallback},
     },
-    "data_health": compute_data_health(provider, resolved_signal_symbol, used_fallback),
+    "data_health": {
+      **compute_data_health(provider, resolved_signal_symbol, used_fallback),
+      "total_sessions": total_sessions,
+      "used_sessions": len(session_rows),
+      "skipped_sessions_count": len(skipped_sessions),
+      "missing_ratio": (len(skipped_sessions) / total_sessions) if total_sessions > 0 else 1.0,
+      "gaps": skipped_sessions[:50],
+    },
   }
 
   return BacktestResult(equity=equity, trades=trades, kpis=kpis, artifacts=artifacts)
