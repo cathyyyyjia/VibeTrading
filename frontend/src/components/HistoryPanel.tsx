@@ -7,9 +7,9 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/contexts/I18nContext';
+import { useAuth } from '@/contexts/AuthContext';
 import * as api from '@/lib/api';
 import type { HistoryEntry } from '@/lib/api';
-import { supabase } from '@/lib/supabase';
 import KPICards from './KPICards';
 import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
@@ -20,6 +20,7 @@ interface HistoryPanelProps {
 
 export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
   const { t } = useI18n();
+  const { session } = useAuth();
   const [isOpen, setIsOpen] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -28,13 +29,16 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!session?.access_token) {
+      setHistory([]);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     (async () => {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        setLoading(false);
-        return;
-      }
       api
         .getHistory()
         .then((res) => {
@@ -53,7 +57,7 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session?.access_token]);
 
   const toggleExpanded = (runId: string) => {
     setExpandedIds(prev => {

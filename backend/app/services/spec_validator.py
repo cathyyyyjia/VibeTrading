@@ -14,6 +14,21 @@ def _require(cond: bool, code: str, message: str, details: dict[str, Any] | None
     raise AppError(code, message, details or {})
 
 
+def _coerce_universe(raw: Any) -> dict[str, Any]:
+  if isinstance(raw, dict):
+    universe = dict(raw)
+  elif isinstance(raw, str):
+    symbol = raw.strip().upper()
+    universe = {"signal_symbol": symbol} if symbol else {}
+  elif isinstance(raw, (list, tuple, set)):
+    symbols = [str(x).strip().upper() for x in raw if str(x).strip()]
+    universe = {"signal_symbol": symbols[0], "signal_symbol_fallbacks": symbols} if symbols else {}
+  else:
+    universe = {}
+
+  return universe
+
+
 def enforce_hard_rules(spec: dict[str, Any]) -> dict[str, Any]:
   spec = dict(spec)
 
@@ -24,7 +39,7 @@ def enforce_hard_rules(spec: dict[str, Any]) -> dict[str, Any]:
   spec.setdefault("execution", {})
   spec["execution"]["model"] = "MOC"
 
-  universe = dict(spec.get("universe") or {})
+  universe = _coerce_universe(spec.get("universe"))
   universe.setdefault("signal_symbol", "QQQ")
   universe.setdefault("signal_symbol_fallbacks", ["NDX", "QQQ"])
   universe.setdefault("trade_symbol", "TQQQ")
@@ -81,4 +96,3 @@ def validate_strategy_spec_minimal(spec: dict[str, Any]) -> None:
   lookback = constants.get("lookback")
   if isinstance(lookback, str) and not _LOOKBACK_RE.match(lookback.replace(" ", "")):
     raise AppError("VALIDATION_ERROR", "lookback must include units", {"lookback": lookback})
-

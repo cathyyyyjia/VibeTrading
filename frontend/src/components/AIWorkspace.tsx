@@ -3,11 +3,9 @@
 // Design: Swiss Precision - timeline flow, status tracking
 // ============================================================
 
-import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import WorkspaceStepCard from './WorkspaceStep';
 import ArtifactsSection from './ArtifactsSection';
-import CodeModal from './CodeModal';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { StepInfo, RunStatusResponse } from '@/lib/api';
@@ -23,13 +21,6 @@ interface AIWorkspaceProps {
 
 export default function AIWorkspace({ status, runId, steps, progress, artifacts, statusMessage }: AIWorkspaceProps) {
   const { t } = useI18n();
-  const [codeModalOpen, setCodeModalOpen] = useState(false);
-  const [codeContent, setCodeContent] = useState('');
-
-  const handleViewCode = (code: string) => {
-    setCodeContent(code);
-    setCodeModalOpen(true);
-  };
 
   const isIdle = status === 'idle';
   const isAnalyzing = status === 'analyzing';
@@ -84,8 +75,6 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
                 step={step}
                 isLast={index === steps.length - 1}
                 progress={progress}
-                onViewCode={handleViewCode}
-                dsl={artifacts?.dsl || ''}
               />
             ))}
 
@@ -97,12 +86,6 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
         )}
       </div>
 
-      {/* Code Modal */}
-      <CodeModal
-        isOpen={codeModalOpen}
-        onClose={() => setCodeModalOpen(false)}
-        code={codeContent}
-      />
     </div>
   );
 }

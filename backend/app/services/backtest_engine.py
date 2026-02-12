@@ -229,6 +229,7 @@ async def run_backtest_from_spec(
     fill_px = fill_px_raw * slip_mult
     proceeds = qty * fill_px - commission_per_trade
     realized = (fill_px - avg_cost) * qty
+    pnl_pct = ((fill_px / avg_cost) - 1.0) * 100.0 if avg_cost > 0 else 0.0
 
     cash += proceeds
     position_qty -= qty
@@ -250,6 +251,7 @@ async def run_backtest_from_spec(
           "is_fallback": used_fallback,
         },
         "pnl": float(realized),
+        "pnl_pct": float(pnl_pct),
       }
     )
 

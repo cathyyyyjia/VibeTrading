@@ -113,7 +113,11 @@ async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, u
   return run
 
 
-async def execute_run(run_id: uuid.UUID) -> None:
+async def execute_run(
+  run_id: uuid.UUID,
+  start_date: str = "2025-01-01",
+  end_date: str = "2025-12-31",
+) -> None:
   async with SessionLocal() as db:
     run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one_or_none()
     if run is None:
@@ -152,11 +156,29 @@ async def execute_run(run_id: uuid.UUID) -> None:
       await _set_step_state(db, run_id, "plan", "DONE", _log("INFO", "ExecutionPlan compiled"))
 
       await _set_step_state(db, run_id, "data", "RUNNING", _log("INFO", "Fetching minute data"))
-      await _set_step_state(db, run_id, "data", "DONE", _log("INFO", "Data ready"))
+      await _set_step_state(db, run_id, "data", "DONE", _log("INFO", "Data ready", {"start_date": start_date, "end_date": end_date}))
 
       await _set_step_state(db, run_id, "backtest", "RUNNING", _log("INFO", "Running backtest"))
-      result = await run_backtest_from_spec(spec, start_date="2024-01-01", end_date="2024-03-31")
-      await _set_step_state(db, run_id, "backtest", "DONE", _log("INFO", "Backtest completed", {"trades": len(result.trades)}))
+      result = await run_backtest_from_spec(spec, start_date=start_date, end_date=end_date)
+      resolved = (result.artifacts or {}).get("resolved") if isinstance(result.artifacts, dict) else {}
+      universe = (resolved or {}).get("universe") if isinstance(resolved, dict) else {}
+      await _set_step_state(
+        db,
+        run_id,
+        "backtest",
+        "DONE",
+        _log(
+          "INFO",
+          "Backtest completed",
+          {
+            "trades": len(result.trades),
+            "signal_symbol": (universe or {}).get("signal_symbol"),
+            "trade_symbol": (universe or {}).get("trade_symbol"),
+            "return_pct": result.kpis.get("return_pct"),
+            "max_dd_pct": result.kpis.get("max_dd_pct"),
+          },
+        ),
+      )
 
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Generating report"))
       report = jsonable_encoder({"kpis": result.kpis, "equity": result.equity, "trades": result.trades})

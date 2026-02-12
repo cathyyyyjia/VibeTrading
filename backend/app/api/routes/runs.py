@@ -43,7 +43,7 @@ async def post_run(
   provider, payload = claims
   user = await ensure_user_from_claims(db, provider, payload)
   run = await create_run(db, req, user_id=user.id)
-  background_tasks.add_task(execute_run, run.id)
+  background_tasks.add_task(execute_run, run.id, req.start_date.isoformat(), req.end_date.isoformat())
   return CreateRunResponse(
     run_id=str(run.id),
     message=f"Backtest run created. Poll /api/runs/{run.id}/status for progress.",

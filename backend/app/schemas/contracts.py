@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -38,6 +38,8 @@ class NaturalLanguageStrategyRequest(BaseModel):
   nl: str = Field(min_length=1)
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"]
   as_of: datetime | None = None
+  start_date: date = Field(default=date(2025, 1, 1))
+  end_date: date = Field(default=date(2025, 12, 31))
   overrides: dict[str, Any] | None = None
 
 
@@ -79,6 +81,8 @@ class BacktestTrade(BaseModel):
   fill_price: float
   cost: dict[str, Any]
   why: dict[str, Any]
+  pnl: float | None = None
+  pnl_pct: float | None = None
 
 
 class BacktestReportResponse(BaseModel):

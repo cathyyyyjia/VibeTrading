@@ -4,8 +4,7 @@
 // ============================================================
 
 import { useState } from 'react';
-import { CheckCircle2, Loader2, Circle, AlertTriangle, AlertCircle, Code2, ChevronRight, Check, ChevronDown } from 'lucide-react';
-import { useI18n } from '@/contexts/I18nContext';
+import { CheckCircle2, Loader2, Circle, AlertTriangle, AlertCircle, ChevronRight, Check, ChevronDown } from 'lucide-react';
 import type { StepInfo } from '@/lib/api';
 
 type StepStatus = StepInfo['status'];
@@ -14,8 +13,6 @@ interface WorkspaceStepProps {
   step: StepInfo;
   isLast: boolean;
   progress: number;
-  onViewCode?: (code: string) => void;
-  dsl?: string;
 }
 
 function StatusIcon({ status }: { status: StepStatus }) {
@@ -33,83 +30,29 @@ function StatusIcon({ status }: { status: StepStatus }) {
   }
 }
 
-function AnalysisContent({ tags }: { tags: string[] }) {
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-2.5">
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center px-2.5 py-1 text-[11px] font-medium bg-card text-foreground rounded-md border border-border"
-        >
-          {tag}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function DataSynthContent({ step }: { step: StepInfo }) {
-  const isRunning = step.status === 'running';
-  const progressPct = step.status === 'done' ? 100 : isRunning ? 60 : 0;
+  const isDone = step.status === 'done';
+  const logs = step.logs.slice(-4);
 
   return (
     <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-foreground">BTC-USD Feed</span>
-        {(isRunning || step.status === 'done') && (
-          <span className="text-[10px] font-bold text-red-500 bg-red-50 dark:bg-red-950 px-1.5 py-0.5 rounded border border-red-100 dark:border-red-800">
-            Live
+        <span className="text-xs font-medium text-foreground">Market Data</span>
+        {(step.status === 'running' || isDone) && (
+          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+            {isDone ? 'Ready' : 'Loading'}
           </span>
         )}
       </div>
-      <div className="flex gap-1">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div
-            key={i}
-            className={`h-3.5 flex-1 rounded-sm transition-colors duration-300 ${
-              i < Math.floor(progressPct / 12.5) ? 'bg-foreground' : 'bg-muted'
-            }`}
-          />
-        ))}
+      <div className="space-y-1.5">
+        {logs.length > 0 ? logs.map((log, i) => (
+          <div key={i} className="text-xs text-muted-foreground truncate" title={log}>
+            {log.replace('[INFO] ', '').replace('[DEBUG] ', '')}
+          </div>
+        )) : (
+          <div className="text-xs text-muted-foreground">No data logs available</div>
+        )}
       </div>
-    </div>
-  );
-}
-
-function LogicContent({ onViewCode, t }: { onViewCode?: () => void; t: (key: string) => string }) {
-  return (
-    <div className="mt-2.5 space-y-2">
-      <div className="code-block p-3 overflow-hidden">
-        <div className="flex gap-1.5 mb-2.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-white/20" />
-          <div className="w-2.5 h-2.5 rounded-full bg-white/20" />
-          <div className="w-2.5 h-2.5 rounded-full bg-white/20" />
-        </div>
-        <pre className="text-[11px] leading-relaxed whitespace-pre-wrap">
-          <code>
-            <span className="text-blue-300">def </span>
-            <span className="text-white font-bold">on_signal</span>
-            <span className="text-white">(data):</span>
-            {'\n'}
-            <span className="text-white">    </span>
-            <span className="text-purple-300">if </span>
-            <span className="text-white">data.sma50 {'>'} data.sma200:</span>
-            {'\n'}
-            <span className="text-white">        </span>
-            <span className="text-purple-300">return </span>
-            <span className="text-emerald-400">"LONG"</span>
-          </code>
-        </pre>
-      </div>
-      {onViewCode && (
-        <button
-          onClick={onViewCode}
-          className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Code2 className="w-3.5 h-3.5" />
-          {t('workspace.viewFullCode')}
-        </button>
-      )}
     </div>
   );
 }
@@ -123,7 +66,7 @@ function BacktestContent({ progress, step }: { progress: number; step: StepInfo 
     <div className="mt-2.5 space-y-2.5">
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs font-medium text-foreground">Monte Carlo Simulation</span>
+          <span className="text-xs font-medium text-foreground">Backtest Engine</span>
           <span className="text-xs font-mono text-muted-foreground">{displayProgress}%</span>
         </div>
         <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
@@ -187,8 +130,7 @@ function ErrorLogs({ logs }: { logs: string[] }) {
   );
 }
 
-export default function WorkspaceStepCard({ step, isLast, progress, onViewCode, dsl }: WorkspaceStepProps) {
-  const { t } = useI18n();
+export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
   const isActive = step.status === 'running' || step.status === 'done' || step.status === 'error';
   const isData = step.key === 'data';
   const isBacktest = step.key === 'backtest';
@@ -204,9 +146,9 @@ export default function WorkspaceStepCard({ step, isLast, progress, onViewCode, 
   };
 
   const statusLabelMap: Record<string, string> = {
-    running: t('step.running'),
-    done: t('step.done'),
-    error: t('step.error'),
+    running: 'Running',
+    done: 'Done',
+    error: 'Error',
   };
 
   return (

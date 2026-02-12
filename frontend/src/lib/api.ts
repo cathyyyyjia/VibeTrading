@@ -241,8 +241,17 @@ type V0BacktestReportResponse = {
     fill_price: number;
     cost: Record<string, unknown>;
     why: Record<string, unknown>;
+    pnl?: number;
+    pnl_pct?: number;
   }>;
 };
+
+function formatStepLog(entry: V0LogEntry): string {
+  const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : '';
+  const kv = entry.kv && Object.keys(entry.kv).length > 0 ? ` ${JSON.stringify(entry.kv)}` : '';
+  const prefix = ts ? `${ts} ` : '';
+  return `${prefix}[${entry.level}] ${entry.msg}${kv}`;
+}
 
 function mapV0StepToStepInfo(step: V0WorkspaceStep): StepInfo {
   const statusMap: Record<V0WorkspaceStepState, StepInfo['status']> = {
@@ -253,10 +262,7 @@ function mapV0StepToStepInfo(step: V0WorkspaceStep): StepInfo {
     SKIPPED: 'queued',
   };
 
-  const logs = (step.logs || []).map((l) => {
-    const kv = l.kv && Object.keys(l.kv).length > 0 ? ` ${JSON.stringify(l.kv)}` : '';
-    return `[${l.level}] ${l.msg}${kv}`;
-  });
+  const logs = (step.logs || []).map(formatStepLog);
 
   return { key: step.id, title: step.label, status: statusMap[step.state], durationMs: null, logs };
 }
@@ -275,10 +281,18 @@ export async function getRunArtifact(runId: string, name: string): Promise<{ nam
 // POST /api/runs (v0)
 export async function createRun(prompt: string, options?: Record<string, unknown>): Promise<CreateRunResponse> {
   const mode = (options?.mode as V0Mode | undefined) ?? 'BACKTEST_ONLY';
+  const startDate = typeof options?.startDate === 'string' ? options.startDate : '2025-01-01';
+  const endDate = typeof options?.endDate === 'string' ? options.endDate : '2025-12-31';
   const res = await fetch(`${baseUrl}/api/runs`, {
     method: 'POST',
     headers: await buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ input_type: 'NATURAL_LANGUAGE', nl: prompt, mode }),
+    body: JSON.stringify({
+      input_type: 'NATURAL_LANGUAGE',
+      nl: prompt,
+      mode,
+      start_date: startDate,
+      end_date: endDate,
+    }),
   });
   if (!res.ok) throw new Error(`Failed to create run: ${res.statusText}`);
   const data = (await res.json()) as { run_id: string };
@@ -290,8 +304,11 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
   const res = await fetch(`${baseUrl}/api/runs/${runId}/status`, { headers: await buildHeaders() });
   if (!res.ok) throw new Error(`Failed to get status: ${res.statusText}`);
   const data = (await res.json()) as V0RunStatusResponse;
-  const reportUrl = `${baseUrl}/api/runs/${runId}/report`;
-  const tradesCsvUrl = findArtifactUri(data.artifacts, 'trades.csv') ? `${baseUrl}${findArtifactUri(data.artifacts, 'trades.csv')}` : '';
+  const reportUri = findArtifactUri(data.artifacts, 'report.json');
+  const tradesCsvUri = findArtifactUri(data.artifacts, 'trades.csv');
+  const dslUri = findArtifactUri(data.artifacts, 'dsl.json');
+  const reportUrl = reportUri ? `${baseUrl}${reportUri}` : `${baseUrl}/api/runs/${runId}/report`;
+  const tradesCsvUrl = tradesCsvUri ? `${baseUrl}${tradesCsvUri}` : '';
   const steps = data.steps.map(mapV0StepToStepInfo);
   return {
     runId: data.run_id,
@@ -299,7 +316,7 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
     steps,
     progress: data.progress,
     artifacts: {
-      dsl: '',
+      dsl: dslUri ? `${baseUrl}${dslUri}` : '',
       reportUrl,
       tradesCsvUrl,
     },
@@ -321,11 +338,14 @@ export async function getRunReport(runId: string): Promise<RunReportResponse> {
   const equity = data.equity.map((p) => ({ timestamp: p.t, value: p.v }));
   const trades: TradeRecord[] = data.trades.map((t) => ({
     timestamp: new Date(t.fill_time).toLocaleString(),
+    entryTime: new Date(t.decision_time).toLocaleString(),
+    exitTime: new Date(t.fill_time).toLocaleString(),
     symbol: t.symbol,
     action: t.side,
     price: t.fill_price,
-    pnl: null,
-    reason: JSON.stringify(t.why ?? {}),
+    pnl: typeof t.pnl === 'number' ? t.pnl : null,
+    pnlPct: typeof t.pnl_pct === 'number' ? t.pnl_pct : null,
+    reason: t.why ? JSON.stringify(t.why) : null,
   }));
 
   const summary: BacktestSummary = {
