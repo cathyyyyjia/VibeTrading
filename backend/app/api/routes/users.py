@@ -37,7 +37,7 @@ class UserResponse(BaseModel):
 @router.get("", response_model=list[UserResponse])
 async def list_users(db: AsyncSession = Depends(get_db), claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims)) -> list[UserResponse]:
   provider, payload = claims
-  u = await ensure_user_from_claims(db, provider, payload)
+  u = await ensure_user_from_claims(db, provider, payload, touch_last_signed_in=True, sync_profile=True)
   identities = (await db.execute(select(OAuthIdentity).where(OAuthIdentity.user_id == u.id))).scalars().all()
   return [
     UserResponse(
@@ -54,7 +54,7 @@ async def list_users(db: AsyncSession = Depends(get_db), claims: tuple[str, dict
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db), claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims)) -> UserResponse:
   provider, payload = claims
-  cu = await ensure_user_from_claims(db, provider, payload)
+  cu = await ensure_user_from_claims(db, provider, payload, touch_last_signed_in=True, sync_profile=True)
   if cu.id != user_id:
     raise AppError("UNAUTHORIZED", "forbidden", {"user_id": str(user_id)}, http_status=403)
   u = cu

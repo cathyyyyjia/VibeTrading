@@ -130,14 +130,30 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
     await db.execute(select(Run).where(Run.user_id == user.id, Run.state.in_(["completed", "failed"])).order_by(Run.updated_at.desc()).limit(100))
   ).scalars().all()
 
+  if not runs:
+    return RunHistoryResponse(history=[])
+
+  strategy_ids = {r.strategy_id for r in runs}
+  run_ids = {r.id for r in runs}
+  strategies = (
+    await db.execute(select(Strategy).where(Strategy.id.in_(strategy_ids)))
+  ).scalars().all()
+  strategy_by_id = {s.id: s for s in strategies}
+  artifacts = (
+    await db.execute(select(RunArtifact).where(RunArtifact.run_id.in_(run_ids)))
+  ).scalars().all()
+  artifacts_by_run_id: dict[uuid.UUID, list[RunArtifact]] = {}
+  for artifact in artifacts:
+    artifacts_by_run_id.setdefault(artifact.run_id, []).append(artifact)
+
   out: list[RunHistoryEntry] = []
   for r in runs:
-    strategy = (await db.execute(select(Strategy).where(Strategy.id == r.strategy_id))).scalar_one_or_none()
-    artifacts = (await db.execute(select(RunArtifact).where(RunArtifact.run_id == r.id))).scalars().all()
-    artifact_map = {a.name: a.uri for a in artifacts}
+    strategy = strategy_by_id.get(r.strategy_id)
+    run_artifacts = artifacts_by_run_id.get(r.id, [])
+    artifact_map = {a.name: a.uri for a in run_artifacts}
 
     kpis: BacktestKpis | None = None
-    report = next((a for a in artifacts if a.name == "report.json" and a.content is not None), None)
+    report = next((a for a in run_artifacts if a.name == "report.json" and a.content is not None), None)
     if report is not None:
       try:
         kpis = BacktestKpis.model_validate(report.content.get("kpis"))

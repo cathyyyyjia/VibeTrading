@@ -30,16 +30,6 @@ STEP_LABELS: dict[StepId, str] = {
   "deploy": "Deploy",
 }
 
-STEP_PROGRESS: dict[StepId, int] = {
-  "parse": 10,
-  "plan": 25,
-  "data": 45,
-  "backtest": 75,
-  "report": 95,
-  "deploy": 100,
-}
-
-
 def _now() -> datetime:
   return datetime.now(timezone.utc)
 
@@ -54,10 +44,9 @@ async def _set_step_state(db: AsyncSession, run_id: uuid.UUID, step_id: StepId, 
   if log is not None:
     step.logs = [*step.logs, log]
   run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one()
-  if state in ("DONE", "SKIPPED"):
-    run.progress = max(run.progress, STEP_PROGRESS[step_id])
-  elif state == "RUNNING":
-    run.progress = max(run.progress, STEP_PROGRESS[step_id] - 5)
+  if state == "RUNNING" and step_id == "backtest":
+    # Progress is date-driven; keep 0 until first processed session.
+    run.progress = max(run.progress, 0)
   await db.commit()
 
 
@@ -166,10 +155,8 @@ async def execute_run(
         nonlocal last_persisted
         if total <= 0:
           return
-        progress_start = 50
-        progress_end = 90
         ratio = min(max(done / total, 0.0), 1.0)
-        target = progress_start + int((progress_end - progress_start) * ratio)
+        target = int(ratio * 100.0)
         should_persist = done == total or done == 1 or done - last_persisted >= 5
         if not should_persist:
           return

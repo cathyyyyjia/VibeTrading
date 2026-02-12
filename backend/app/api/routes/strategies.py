@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AppError
 from app.db.engine import get_db
 from app.db.models import Strategy
 from app.services.spec_builder import nl_to_strategy_spec
@@ -75,3 +76,19 @@ async def get_strategy(strategy_id: uuid.UUID, db: AsyncSession = Depends(get_db
     spec=s.spec,
     created_at=s.created_at.isoformat(),
   )
+
+
+@router.delete("/{strategy_id}", status_code=204, response_class=Response)
+async def delete_strategy(
+  strategy_id: uuid.UUID,
+  db: AsyncSession = Depends(get_db),
+  claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
+) -> Response:
+  provider, payload = claims
+  user = await ensure_user_from_claims(db, provider, payload)
+  strategy = (await db.execute(select(Strategy).where(Strategy.id == strategy_id, Strategy.user_id == user.id))).scalar_one_or_none()
+  if strategy is None:
+    raise AppError("DATA_UNAVAILABLE", "strategy not found", {"strategy_id": str(strategy_id)}, http_status=404)
+  await db.delete(strategy)
+  await db.commit()
+  return Response(status_code=204)

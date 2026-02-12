@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import uuid
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -29,6 +30,8 @@ if _is_supabase_pooler:
   # can break across transactions unless both caches are disabled.
   _connect_args["statement_cache_size"] = 0
   _connect_args["prepared_statement_cache_size"] = 0
+  # Generate unique names for any unavoidable prepared statements.
+  _connect_args["prepared_statement_name_func"] = lambda: f"__asyncpg_{uuid.uuid4()}__"
   # Avoid long-lived client-side pooled connections on top of PgBouncer.
   _engine_kwargs["poolclass"] = NullPool
 

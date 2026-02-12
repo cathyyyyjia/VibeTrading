@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, Copy } from 'lucide-react';
+import { ChevronDown, Copy, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -104,6 +104,34 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
     }
   };
 
+  const handleDeleteStrategy = async (entry: HistoryEntry) => {
+    if (!entry.strategyId) {
+      toast.error(t('history.deleteFailed'));
+      return;
+    }
+    if (!window.confirm(t('history.deleteConfirm'))) return;
+    try {
+      await api.deleteStrategy(entry.strategyId);
+      const removedRunIds = new Set(history.filter((item) => item.strategyId === entry.strategyId).map((item) => item.runId));
+      setHistory((prev) => prev.filter((item) => item.strategyId !== entry.strategyId));
+      setDetailsByRunId((prev) => {
+        const next = { ...prev };
+        for (const runId of Object.keys(next)) {
+          if (removedRunIds.has(runId)) delete next[runId];
+        }
+        return next;
+      });
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        removedRunIds.forEach((runId) => next.delete(runId));
+        return next;
+      });
+      toast.success(t('history.deleteSuccess'));
+    } catch {
+      toast.error(t('history.deleteFailed'));
+    }
+  };
+
   if (loading) {
     return (
       <div className="border-t border-border pt-6">
@@ -174,6 +202,18 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
                       )}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleDeleteStrategy(entry);
+                    }}
+                    className="p-1.5 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                    title={t('history.delete')}
+                    aria-label={t('history.delete')}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </button>
 
                 {/* Expanded Content */}

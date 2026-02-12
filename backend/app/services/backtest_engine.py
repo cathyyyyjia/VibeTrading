@@ -255,6 +255,25 @@ async def run_backtest_from_spec(
 
   macd_line, macd_sig = _macd(four_h_closes, 12, 26, 9)
   cross_down = [_cross_down(macd_line, macd_sig, i) for i in range(len(four_h_closes))]
+  session_index_by_date = {ts.date(): idx for idx, ts in enumerate(daily_close_ts)}
+  cross_events_per_session = [0] * len(daily_close_ts)
+  for idx_4h, end_ts in enumerate(four_h_ends):
+    if not cross_down[idx_4h]:
+      continue
+    session_idx = session_index_by_date.get(end_ts.date())
+    if session_idx is not None:
+      cross_events_per_session[session_idx] += 1
+  cross_events_prefix: list[int] = []
+  running_cross_count = 0
+  for c in cross_events_per_session:
+    running_cross_count += c
+    cross_events_prefix.append(running_cross_count)
+
+  def has_cross_down_in_window(start_idx: int, end_idx: int) -> bool:
+    if end_idx < 0 or start_idx > end_idx or not cross_events_prefix:
+      return False
+    left = cross_events_prefix[start_idx - 1] if start_idx > 0 else 0
+    return (cross_events_prefix[end_idx] - left) > 0
 
   def last_closed_4h_idx(decision_ts: datetime) -> int | None:
     idx: int | None = None
@@ -313,20 +332,7 @@ async def run_backtest_from_spec(
       continue
 
     lookback_start = max(0, i - lookback_days + 1)
-    event_ok = False
-    for j, end_ts in enumerate(four_h_ends):
-      if end_ts > decision_ts:
-        continue
-      session_j = None
-      for k, close_ts in enumerate(daily_close_ts):
-        if close_ts.date() == end_ts.date():
-          session_j = k
-          break
-      if session_j is None or session_j < lookback_start or session_j > i:
-        continue
-      if cross_down[j]:
-        event_ok = True
-        break
+    event_ok = has_cross_down_in_window(lookback_start, i)
 
     state_ok = decision_px < ma5
     if not (event_ok and state_ok):

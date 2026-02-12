@@ -458,3 +458,12 @@ export async function getHistory(): Promise<GetHistoryResponse> {
 
   return { history };
 }
+
+// DELETE /api/strategies/:strategyId
+export async function deleteStrategy(strategyId: string): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/strategies/${strategyId}`, {
+    method: 'DELETE',
+    headers: await buildHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to delete strategy: ${res.statusText}`);
+}

@@ -71,6 +71,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.loadFailed': 'Failed to load history',
     'history.dslCopied': 'DSL copied to clipboard',
     'history.promptLoaded': 'Prompt loaded',
+    'history.delete': 'Delete',
+    'history.deleteConfirm': 'Delete this strategy and all related runs?',
+    'history.deleteSuccess': 'Strategy deleted',
+    'history.deleteFailed': 'Failed to delete strategy',
 
     // AI Workspace
     'workspace.title': 'AI Workspace',
@@ -199,6 +203,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.loadFailed': '加载历史记录失败',
     'history.dslCopied': 'DSL 已复制到剪贴板',
     'history.promptLoaded': '策略已加载',
+    'history.delete': '删除',
+    'history.deleteConfirm': '删除该策略及相关回测数据？',
+    'history.deleteSuccess': '策略已删除',
+    'history.deleteFailed': '删除策略失败',
 
     // AI Workspace
     'workspace.title': 'AI 工作区',

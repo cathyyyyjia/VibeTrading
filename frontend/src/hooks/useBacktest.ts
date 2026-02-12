@@ -32,7 +32,9 @@ export interface UseBacktestReturn {
   retry: () => void;
 }
 
-const POLL_INTERVAL = 800;
+const POLL_INTERVAL_FAST = 1500;
+const POLL_INTERVAL_BACKTEST = 3000;
+const POLL_INTERVAL_MAX = 8000;
 
 export function useBacktest(): UseBacktestReturn {
   const [status, setStatus] = useState<AppStatus>("idle");
@@ -52,34 +54,55 @@ export function useBacktest(): UseBacktestReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
 
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentRunIdRef = useRef<string | null>(null);
+  const inFlightRef = useRef(false);
+  const errorStreakRef = useRef(0);
 
   useEffect(() => {
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) clearTimeout(pollingRef.current);
     };
   }, []);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
-      clearInterval(pollingRef.current);
+      clearTimeout(pollingRef.current);
       pollingRef.current = null;
     }
+    inFlightRef.current = false;
+    errorStreakRef.current = 0;
   }, []);
 
   const pollStatus = useCallback(
     async (rid: string) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      let nextDelay = POLL_INTERVAL_FAST;
+      let shouldContinue = true;
       try {
         const statusData = await api.getRunStatus(rid);
         if (currentRunIdRef.current !== rid) return;
+        errorStreakRef.current = 0;
 
         setSteps(statusData.steps);
-        setProgress(statusData.progress);
+        const runningStep = statusData.steps.find((s) => s.status === "running");
+        let displayProgress = statusData.progress;
+        if (runningStep?.key === "backtest") {
+          const latestLog = [...runningStep.logs].reverse().find((log) => log.includes("Backtesting ")) || "";
+          const m = latestLog.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
+          if (m) {
+            const parsedPct = Number(m[4]);
+            if (!Number.isNaN(parsedPct)) {
+              displayProgress = parsedPct;
+            }
+          }
+          nextDelay = POLL_INTERVAL_BACKTEST;
+        }
+        setProgress(displayProgress);
 
         if (statusData.state === "running") {
           setStatus("running");
-          const runningStep = statusData.steps.find((s) => s.status === "running");
           if (runningStep) {
             if (runningStep.key === "backtest") {
               const latestLog = runningStep.logs[runningStep.logs.length - 1] || "";
@@ -103,9 +126,11 @@ export function useBacktest(): UseBacktestReturn {
           }
         } else if (statusData.state === "completed") {
           setStatus("completed");
+          setProgress(100);
           setArtifacts(statusData.artifacts);
           setStatusMessage("Backtest completed successfully");
           stopPolling();
+          shouldContinue = false;
 
           try {
             const reportData = await api.getRunReport(rid);
@@ -118,6 +143,7 @@ export function useBacktest(): UseBacktestReturn {
         } else if (statusData.state === "failed") {
           setStatus("failed");
           stopPolling();
+          shouldContinue = false;
           const failedStep = statusData.steps.find((s) => s.status === "error");
           const errorMsg = failedStep
             ? `${failedStep.title} failed: ${failedStep.logs.find((l) => l.startsWith("[ERROR]")) || "Unknown error"}`
@@ -126,7 +152,20 @@ export function useBacktest(): UseBacktestReturn {
           setStatusMessage("Backtest failed");
         }
       } catch (e) {
+        errorStreakRef.current += 1;
+        const backoff = Math.min(POLL_INTERVAL_MAX, POLL_INTERVAL_FAST * (2 ** Math.min(errorStreakRef.current, 3)));
+        nextDelay = backoff;
         console.error("Polling error:", e);
+      } finally {
+        inFlightRef.current = false;
+        if (shouldContinue && currentRunIdRef.current === rid) {
+          if (pollingRef.current) {
+            clearTimeout(pollingRef.current);
+          }
+          pollingRef.current = setTimeout(() => {
+            void pollStatus(rid);
+          }, nextDelay);
+        }
       }
     },
     [stopPolling]
@@ -135,8 +174,7 @@ export function useBacktest(): UseBacktestReturn {
   const startPolling = useCallback(
     (rid: string) => {
       stopPolling();
-      pollStatus(rid);
-      pollingRef.current = setInterval(() => pollStatus(rid), POLL_INTERVAL);
+      void pollStatus(rid);
     },
     [pollStatus, stopPolling]
   );

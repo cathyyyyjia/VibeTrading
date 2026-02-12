@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
@@ -7,6 +8,9 @@ from fastapi import Request
 
 from app.core.config import settings
 from app.core.errors import AppError, error_response
+
+_TOKEN_CACHE_TTL_SECONDS = 60.0
+_token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -21,6 +25,14 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 
 async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
+  now = time.monotonic()
+  cached = _token_cache.get(token)
+  if cached is not None:
+    expires_at, claims = cached
+    if expires_at > now:
+      return claims
+    _token_cache.pop(token, None)
+
   if not settings.supabase_project_url:
     raise AppError("CONFIG_ERROR", "SUPABASE_PROJECT_URL is required")
   if not settings.supabase_secret_key:
@@ -57,6 +69,7 @@ async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
     "app_metadata": user.get("app_metadata") if isinstance(user.get("app_metadata"), dict) else {},
     "user_metadata": user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {},
   }
+  _token_cache[token] = (time.monotonic() + _TOKEN_CACHE_TTL_SECONDS, claims)
   return claims
 
 

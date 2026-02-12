@@ -17,6 +17,9 @@ async def ensure_user_from_claims(
   db: AsyncSession,
   provider: str,
   payload: dict[str, Any],
+  *,
+  touch_last_signed_in: bool = False,
+  sync_profile: bool = False,
 ) -> User:
   subject = payload.get("sub")
   email = payload.get("email") if isinstance(payload.get("email"), str) else None
@@ -28,7 +31,16 @@ async def ensure_user_from_claims(
       name = nm
   if name is None and isinstance(payload.get("name"), str):
     name = payload.get("name")
-  return await upsert_oauth_identity(db, provider=provider, subject=str(subject), email=email, name=name, profile=payload)
+  return await upsert_oauth_identity(
+    db,
+    provider=provider,
+    subject=str(subject),
+    email=email,
+    name=name,
+    profile=payload,
+    touch_last_signed_in=touch_last_signed_in,
+    sync_profile=sync_profile,
+  )
 
 async def upsert_oauth_identity(
   db: AsyncSession,
@@ -38,6 +50,8 @@ async def upsert_oauth_identity(
   email: str | None,
   name: str | None,
   profile: dict[str, Any] | None,
+  touch_last_signed_in: bool = False,
+  sync_profile: bool = False,
 ) -> User:
   identity = (
     await db.execute(select(OAuthIdentity).where(OAuthIdentity.provider == provider, OAuthIdentity.subject == subject))
@@ -60,15 +74,33 @@ async def upsert_oauth_identity(
     return user
 
   user = (await db.execute(select(User).where(User.id == identity.user_id))).scalar_one()
-  identity.email = email
-  identity.profile = profile
-  user.last_signed_in_at = _now()
-  if email is not None:
-    user.email = email
-  if name is not None:
-    user.name = name
-  await db.commit()
-  await db.refresh(user)
+  changed = False
+  now = _now()
+
+  if sync_profile:
+    if identity.email != email:
+      identity.email = email
+      changed = True
+    if identity.profile != profile:
+      identity.profile = profile
+      changed = True
+    if email is not None and user.email != email:
+      user.email = email
+      changed = True
+    if name is not None and user.name != name:
+      user.name = name
+      changed = True
+
+  if touch_last_signed_in:
+    # Throttle last_seen updates to avoid write amplification on polling endpoints.
+    last_seen = user.last_signed_in_at
+    if last_seen is None or (now - last_seen).total_seconds() >= 300:
+      user.last_signed_in_at = now
+      changed = True
+
+  if changed:
+    await db.commit()
+    await db.refresh(user)
   return user
 
 
