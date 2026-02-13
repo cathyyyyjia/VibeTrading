@@ -450,6 +450,135 @@ def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] |
   )
 
 
+def _read_pref_int(source: dict[str, Any], keys: list[str], default: int) -> int:
+  for key in keys:
+    raw = source.get(key)
+    if isinstance(raw, (int, float)):
+      return max(1, int(raw))
+    if isinstance(raw, str):
+      try:
+        return max(1, int(float(raw.strip())))
+      except Exception:
+        continue
+  return default
+
+
+def _apply_indicator_preferences_to_draft(draft: dict[str, Any], indicator_preferences: dict[str, Any] | None) -> dict[str, Any]:
+  if not isinstance(indicator_preferences, dict):
+    return draft
+
+  ma_days = _read_pref_int(indicator_preferences, ["maWindowDays", "ma_window_days"], 5)
+  macd_fast = _read_pref_int(indicator_preferences, ["macdFast", "macd_fast"], 12)
+  macd_slow = _read_pref_int(indicator_preferences, ["macdSlow", "macd_slow"], 26)
+  macd_signal = _read_pref_int(indicator_preferences, ["macdSignal", "macd_signal"], 9)
+
+  macd_obj = indicator_preferences.get("macd")
+  if isinstance(macd_obj, dict):
+    macd_fast = _read_pref_int(macd_obj, ["fast"], macd_fast)
+    macd_slow = _read_pref_int(macd_obj, ["slow"], macd_slow)
+    macd_signal = _read_pref_int(macd_obj, ["signal"], macd_signal)
+
+  dsl = draft.get("dsl")
+  if not isinstance(dsl, dict):
+    return draft
+  signal = dsl.get("signal")
+  if not isinstance(signal, dict):
+    return draft
+  indicators = signal.get("indicators")
+  if not isinstance(indicators, list):
+    return draft
+
+  for ind in indicators:
+    if not isinstance(ind, dict):
+      continue
+    ind_type = str(ind.get("type") or "").upper()
+    params = ind.get("params")
+    if not isinstance(params, dict):
+      params = {}
+      ind["params"] = params
+
+    if ind_type in ("SMA", "MA"):
+      params["window"] = f"{ma_days}d"
+    elif ind_type == "MACD":
+      params["fast"] = macd_fast
+      params["slow"] = macd_slow
+      params["signal"] = macd_signal
+
+  return draft
+
+
+def _rewrite_ref_id(raw: Any, id_map: dict[str, str]) -> Any:
+  if not isinstance(raw, str):
+    return raw
+  base_and_field, *at_tf = raw.split("@", 1)
+  base, *field = base_and_field.split(".", 1)
+  new_base = id_map.get(base, base)
+  out = new_base
+  if field:
+    out += f".{field[0]}"
+  if at_tf:
+    out += f"@{at_tf[0]}"
+  return out
+
+
+def _normalize_indicator_ids(draft: dict[str, Any]) -> dict[str, Any]:
+  dsl = draft.get("dsl")
+  if not isinstance(dsl, dict):
+    return draft
+  signal = dsl.get("signal")
+  if not isinstance(signal, dict):
+    return draft
+  indicators = signal.get("indicators")
+  events = signal.get("events")
+  if not isinstance(indicators, list):
+    return draft
+
+  id_map: dict[str, str] = {}
+  used: set[str] = set()
+
+  for ind in indicators:
+    if not isinstance(ind, dict):
+      continue
+    old_id = str(ind.get("id") or "").strip()
+    ind_type = str(ind.get("type") or "").strip().upper()
+    tf = str(ind.get("tf") or "").strip().lower() or "na"
+    params = ind.get("params")
+    if not isinstance(params, dict):
+      params = {}
+    candidate = old_id or "indicator"
+    if ind_type in ("SMA", "MA"):
+      window = str(params.get("window") or "").strip().lower() or "na"
+      candidate = f"{ind_type.lower()}_{window}_{tf}"
+    elif ind_type == "MACD":
+      fast = int(params.get("fast") or 12)
+      slow = int(params.get("slow") or 26)
+      signal_n = int(params.get("signal") or 9)
+      candidate = f"macd_{fast}_{slow}_{signal_n}_{tf}"
+    elif ind_type == "CLOSE":
+      symbol_ref = str(ind.get("symbol_ref") or "signal").strip().lower() or "signal"
+      candidate = f"close_{symbol_ref}_{tf}"
+
+    base = candidate.replace(" ", "_")
+    new_id = base
+    seq = 2
+    while new_id in used:
+      new_id = f"{base}_{seq}"
+      seq += 1
+    used.add(new_id)
+    ind["id"] = new_id
+    if old_id and old_id != new_id:
+      id_map[old_id] = new_id
+
+  if id_map and isinstance(events, list):
+    for ev in events:
+      if not isinstance(ev, dict):
+        continue
+      for key in ("a", "b", "left", "right"):
+        ev[key] = _rewrite_ref_id(ev.get(key), id_map)
+
+  return draft
+
+
 async def nl_to_strategy_spec(
   nl_text: str,
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
@@ -481,7 +610,9 @@ The output MUST be executable and must not contain empty indicators/events/rules
     if not isinstance(llm_draft, dict):
       raise AppError("VALIDATION_ERROR", "LLM did not return object StrategyDraft", {"type": str(type(llm_draft))})
 
-    spec = _assemble_final_strategy_spec(draft=dict(llm_draft), nl_text=nl_text, mode=mode)
+    adjusted_draft = _apply_indicator_preferences_to_draft(dict(llm_draft), indicator_preferences)
+    adjusted_draft = _normalize_indicator_ids(adjusted_draft)
+    spec = _assemble_final_strategy_spec(draft=adjusted_draft, nl_text=nl_text, mode=mode)
     if overrides and isinstance(overrides, dict):
       spec = _deep_merge(spec, overrides)
     spec["strategy_version"] = "v0"
