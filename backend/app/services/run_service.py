@@ -68,10 +68,6 @@ async def _set_step_state(
   step.state = state
   if log is not None:
     step.logs = [*step.logs, log]
-  run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one()
-  if state == "RUNNING" and step_id == "backtest":
-    # Progress is date-driven; keep 0 until first processed session.
-    run.progress = max(run.progress, 0)
   await db.commit()
 
 
@@ -119,7 +115,7 @@ async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, u
   db.add(strategy)
   await db.flush()
 
-  run = Run(strategy_id=strategy.id, mode=req.mode, state="running", progress=0, user_id=user_id)
+  run = Run(strategy_id=strategy.id, mode=req.mode, state="running", user_id=user_id)
   db.add(run)
   await db.flush()
 
@@ -243,7 +239,6 @@ async def execute_run(
         if not should_persist:
           return
 
-        run.progress = max(run.progress, target)
         pct = round(ratio * 100.0, 1)
         progress_log = _log(
           "INFO",
@@ -330,12 +325,10 @@ async def execute_run(
         await _set_step_state(db, run_id, "deploy", "PENDING", _log("INFO", "Awaiting confirm"))
 
       run.state = "completed"
-      run.progress = 100
       await db.commit()
     except AppError as e:
       logger.exception("run_failed", extra={"run_id": str(run_id), "code": e.code})
       run.state = "failed"
-      run.progress = 100
       run.error = {"code": e.code, "message": e.message, "details": e.details or {}}
       await db.commit()
       try:
@@ -351,7 +344,6 @@ async def execute_run(
     except Exception as e:
       logger.exception("run_crash", extra={"run_id": str(run_id)})
       run.state = "failed"
-      run.progress = 100
       run.error = {"code": "INTERNAL", "message": "Unhandled error", "details": {"error": str(e)}}
       await db.commit()
       try:

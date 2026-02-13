@@ -52,7 +52,6 @@ class CreateRunResponse(BaseModel):
 class RunStatusResponse(BaseModel):
   run_id: str
   state: Literal["running", "completed", "failed"]
-  progress: int = Field(ge=0, le=100)
   steps: list[WorkspaceStep]
   artifacts: list[ArtifactRef] = Field(default_factory=list)
 

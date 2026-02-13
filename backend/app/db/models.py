@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,7 +61,6 @@ class Run(Base):
   strategy_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("strategies.id"), nullable=False, index=True)
   mode: Mapped[str] = mapped_column(String(16), nullable=False)
   state: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
-  progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
   error: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
   updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

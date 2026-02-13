@@ -72,7 +72,7 @@ async def post_run(
 
   return CreateRunResponse(
     run_id=str(run.id),
-    message=f"Backtest run created. Track progress via Realtime updates or GET /api/runs/{run.id}/status.",
+    message=f"Backtest run created. Track status via Realtime updates or GET /api/runs/{run.id}/status.",
   )
 
 
@@ -120,7 +120,7 @@ async def get_status(run_id: uuid.UUID, db: AsyncSession = Depends(get_db), clai
     )
 
   art_refs = [{"id": str(a.id), "type": a.type, "name": a.name, "uri": a.uri} for a in artifacts]
-  return RunStatusResponse(run_id=str(run.id), state=run.state, progress=run.progress, steps=ws_steps, artifacts=art_refs)  # type: ignore[arg-type]
+  return RunStatusResponse(run_id=str(run.id), state=run.state, steps=ws_steps, artifacts=art_refs)  # type: ignore[arg-type]
 
 
 @router.get("/{run_id}/report", response_model=None)

@@ -59,7 +59,6 @@ export interface RunStatusResponse {
   runId: string;
   state: "idle" | "running" | "completed" | "failed";
   steps: StepInfo[];
-  progress: number;
   artifacts: {
     dsl: string;
     reportUrl: string;
@@ -115,7 +114,7 @@ type V0WorkspaceStepState = "PENDING" | "RUNNING" | "DONE" | "FAILED" | "SKIPPED
 type V0LogEntry = { ts: string; level: "DEBUG" | "INFO" | "WARN" | "ERROR"; msg: string; kv?: Record<string, unknown> };
 type V0WorkspaceStep = { id: "parse" | "plan" | "data" | "backtest" | "report" | "deploy"; state: V0WorkspaceStepState; label: string; logs: V0LogEntry[] };
 type V0ArtifactRef = { id: string; type: "json" | "markdown" | "image" | "csv" | "binary"; name: string; uri: string };
-type V0RunStatusResponse = { run_id: string; state: "running" | "completed" | "failed"; progress: number; steps: V0WorkspaceStep[]; artifacts: V0ArtifactRef[] };
+type V0RunStatusResponse = { run_id: string; state: "running" | "completed" | "failed"; steps: V0WorkspaceStep[]; artifacts: V0ArtifactRef[] };
 type V0BacktestReportResponse = {
   kpis: {
     return_pct: number;
@@ -225,7 +224,6 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
     runId: data.run_id,
     state: data.state,
     steps,
-    progress: data.progress,
     artifacts: {
       dsl: dslUri ? toAbsoluteApiUrl(dslUri) : "",
       reportUrl,
