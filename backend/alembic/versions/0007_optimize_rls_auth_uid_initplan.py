@@ -3,7 +3,7 @@ from __future__ import annotations
 from alembic import op
 
 
-revision = "0007_optimize_rls_auth_uid_initplan"
+revision = "0007_rls_auth_uid_initplan"
 down_revision = "0006_users_fk_to_auth_users"
 branch_labels = None
 depends_on = None
