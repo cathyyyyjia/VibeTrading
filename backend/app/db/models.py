@@ -25,7 +25,9 @@ StepState = Literal["PENDING", "RUNNING", "DONE", "FAILED", "SKIPPED"]
 class User(Base):
   __tablename__ = "users"
 
-  id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("auth.users.id", ondelete="CASCADE"), primary_key=True)
+  # DB-level FK to auth.users(id) is maintained by migration 0006.
+  # Keep ORM column unbound to external schema table to avoid SQLAlchemy mapper init issues.
+  id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
   email: Mapped[str | None] = mapped_column(Text, nullable=True)
   name: Mapped[str | None] = mapped_column(Text, nullable=True)
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
