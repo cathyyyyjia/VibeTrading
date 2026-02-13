@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const API_MAX_RETRIES = 2;
+const API_TIMEOUT_MS_DEFAULT = Number((import.meta as any).env?.VITE_API_TIMEOUT_MS ?? 45000);
 
 async function buildHeaders(init?: Record<string, string>, tokenOverride?: string | null): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -12,12 +13,36 @@ async function buildHeaders(init?: Record<string, string>, tokenOverride?: strin
   return h;
 }
 
-async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+type ApiFetchOptions = {
+  timeoutMs?: number;
+};
+
+async function parseApiErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body && typeof body === "object") {
+      const code = typeof (body as any).code === "string" ? (body as any).code : "";
+      const message = typeof (body as any).message === "string" ? (body as any).message : "";
+      if (code && message) return `${code}: ${message}`;
+      if (message) return message;
+      if (code) return code;
+    }
+  } catch {
+    // ignore JSON parse errors; use fallback below
+  }
+  return `${fallback} (${res.status})`;
+}
+
+async function apiFetch(path: string, init?: RequestInit, opts?: ApiFetchOptions): Promise<Response> {
   let refreshedToken: string | null = null;
+  const timeoutMs = Number.isFinite(opts?.timeoutMs) ? Number(opts?.timeoutMs) : API_TIMEOUT_MS_DEFAULT;
   for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt += 1) {
     const headers = await buildHeaders(init?.headers as Record<string, string> | undefined, refreshedToken);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
+      const res = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
+      clearTimeout(timeout);
 
       if (res.status === 401 && attempt === 0) {
         const refreshed = await supabase.auth.refreshSession();
@@ -33,6 +58,10 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
       }
       return res;
     } catch (err) {
+      clearTimeout(timeout);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      }
       if (attempt >= API_MAX_RETRIES) {
         throw err;
       }
@@ -182,13 +211,13 @@ function toAbsoluteApiUrl(uri: string): string {
 
 export async function getRunArtifact(runId: string, name: string): Promise<{ name: string; type: string; uri: string; content: any }> {
   const res = await apiFetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}`);
-  if (!res.ok) throw new Error(`Failed to get artifact: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to get artifact"));
   return res.json();
 }
 
 export async function downloadRunArtifact(runId: string, name: string): Promise<Blob> {
   const res = await apiFetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}?download=true`);
-  if (!res.ok) throw new Error(`Failed to download artifact: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to download artifact"));
   return await res.blob();
 }
 
@@ -206,15 +235,15 @@ export async function createRun(prompt: string, options?: Record<string, unknown
       start_date: startDate,
       end_date: endDate,
     }),
-  });
-  if (!res.ok) throw new Error(`Failed to create run: ${res.statusText}`);
+  }, { timeoutMs: 180000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to create run"));
   const data = (await res.json()) as { run_id: string };
   return { runId: data.run_id };
 }
 
 export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
-  const res = await apiFetch(`/api/runs/${runId}/status`);
-  if (!res.ok) throw new Error(`Failed to get status: ${res.statusText}`);
+  const res = await apiFetch(`/api/runs/${runId}/status`, undefined, { timeoutMs: 20000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to get status"));
   const data = (await res.json()) as V0RunStatusResponse;
   const dslUri = findArtifactUri(data.artifacts, "dsl.json");
   const reportUrl = `${baseUrl}/api/runs/${runId}/artifacts/report.json?download=true`;
@@ -233,8 +262,8 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
 }
 
 export async function getRunReport(runId: string): Promise<RunReportResponse> {
-  const res = await apiFetch(`/api/runs/${runId}/report`);
-  if (!res.ok) throw new Error(`Failed to get report: ${res.statusText}`);
+  const res = await apiFetch(`/api/runs/${runId}/report`, undefined, { timeoutMs: 30000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to get report"));
   const data = (await res.json()) as V0BacktestReportResponse;
   const kpis: LegacyKPIs = {
     returnPct: Number(data.kpis.return_pct.toFixed(4)),
@@ -274,7 +303,7 @@ export async function deployRun(runId: string, mode: "paper" | "live"): Promise<
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
   });
-  if (!res.ok) throw new Error(`Failed to deploy: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to deploy"));
   return res.json();
 }
 
@@ -309,7 +338,7 @@ export async function getHistory(): Promise<GetHistoryResponse> {
   type V0HistoryResponse = { history: V0HistoryEntry[] };
 
   const res = await apiFetch(`/api/runs/history`);
-  if (!res.ok) throw new Error(`Failed to get history: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to get history"));
   const data = (await res.json()) as V0HistoryResponse;
 
   const history: HistoryEntry[] = data.history.map((h) => {
@@ -343,7 +372,7 @@ export async function deleteStrategy(strategyId: string): Promise<void> {
   const res = await apiFetch(`/api/strategies/${strategyId}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`Failed to delete strategy: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to delete strategy"));
 }
 
 export interface UserProfile {
@@ -374,7 +403,7 @@ function mapUserProfile(data: V0UserProfileResponse): UserProfile {
 
 export async function getMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`/api/users/me`);
-  if (!res.ok) throw new Error(`Failed to get profile: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to get profile"));
   const data = (await res.json()) as V0UserProfileResponse;
   return mapUserProfile(data);
 }
@@ -385,7 +414,7 @@ export async function updateMyProfile(payload: { displayName: string | null }): 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ display_name: payload.displayName }),
   });
-  if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to update profile"));
   const data = (await res.json()) as V0UserProfileResponse;
   return mapUserProfile(data);
 }

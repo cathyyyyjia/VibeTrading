@@ -4,7 +4,7 @@ import random
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 
@@ -198,6 +198,5 @@ def get_market_data_provider() -> MarketDataProvider:
   return SyntheticProvider()
 
 
-def compute_data_health(provider: MarketDataProvider, signal_symbol: str, used_fallback: bool) -> dict[str, Any]:
-  source: Literal["primary", "fallback"] = "fallback" if used_fallback else "primary"
-  return {"source": source, "is_fallback": used_fallback, "missing_ratio": 0.0, "gaps": []}
+def compute_data_health(provider: MarketDataProvider, signal_symbol: str) -> dict[str, Any]:
+  return {"source": "primary", "missing_ratio": 0.0, "gaps": []}

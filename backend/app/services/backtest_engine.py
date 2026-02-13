@@ -151,9 +151,12 @@ async def run_backtest_from_spec(
     raise AppError("VALIDATION_ERROR", "execution.model must be MOC", {"execution": strategy_spec.get("execution")})
 
   universe = strategy_spec.get("universe") or {}
-  signal_symbol = str(universe.get("signal_symbol") or "QQQ")
-  trade_symbol = str(universe.get("trade_symbol") or "TQQQ")
-  fallbacks = universe.get("signal_symbol_fallbacks") or ["NDX", "QQQ"]
+  signal_symbol = str(universe.get("signal_symbol") or "").strip().upper()
+  trade_symbol = str(universe.get("trade_symbol") or "").strip().upper()
+  if not signal_symbol:
+    raise AppError("VALIDATION_ERROR", "universe.signal_symbol is required", {"universe": universe})
+  if not trade_symbol:
+    raise AppError("VALIDATION_ERROR", "universe.trade_symbol is required", {"universe": universe})
 
   cal = xcals.get_calendar("XNYS")
   sessions = cal.sessions_in_range(start_date, end_date)
@@ -165,8 +168,6 @@ async def run_backtest_from_spec(
   slippage_bps = float((strategy_spec.get("execution") or {}).get("slippage_bps") or 0.0)
   commission_per_trade = float((strategy_spec.get("execution") or {}).get("commission_per_trade") or 0.0)
   session_rows: list[dict[str, Any]] = []
-  used_fallback = False
-  resolved_signal_symbol = signal_symbol
   total_sessions = len(sessions)
   skipped_sessions: list[dict[str, Any]] = []
 
@@ -202,7 +203,7 @@ async def run_backtest_from_spec(
     signal_bars_cache[symbol] = grouped
     return grouped
 
-  primary_signal_bars = await _get_signal_bars_by_date(resolved_signal_symbol)
+  primary_signal_bars = await _get_signal_bars_by_date(signal_symbol)
 
   for session_idx, meta in enumerate(session_meta, start=1):
     session_open = meta["session_open"]
@@ -211,29 +212,14 @@ async def run_backtest_from_spec(
     session_date = meta["session_date"]
 
     bars_signal: list[MinuteBar] | None = primary_signal_bars.get(session_date)
-    load_errors: list[str] = []
-    chosen_signal = resolved_signal_symbol
-    if not bars_signal:
-      for s in [resolved_signal_symbol] + [x for x in fallbacks if x != resolved_signal_symbol]:
-        try:
-          grouped = await _get_signal_bars_by_date(s)
-          candidate = grouped.get(session_date)
-          if candidate:
-            bars_signal = candidate
-            chosen_signal = s
-            break
-          load_errors.append(f"{s}: no bars")
-        except Exception as e:
-          load_errors.append(f"{s}: {str(e)}")
-          continue
 
     if not bars_signal:
       skipped_sessions.append(
         {
           "session_date": session_close.date().isoformat(),
           "reason": "missing_signal_bars",
-          "symbol": resolved_signal_symbol,
-          "errors": load_errors[-5:],
+          "symbol": signal_symbol,
+          "errors": ["no bars"],
         }
       )
       if progress_hook:
@@ -242,11 +228,6 @@ async def run_backtest_from_spec(
         except Exception:
           pass
       continue
-
-    if chosen_signal != resolved_signal_symbol:
-      used_fallback = True
-      resolved_signal_symbol = chosen_signal
-      primary_signal_bars = signal_bars_cache.get(resolved_signal_symbol, primary_signal_bars)
 
     bars_trade = trade_bars_by_date.get(session_date)
     if not bars_trade:
@@ -342,7 +323,7 @@ async def run_backtest_from_spec(
   risk = strategy_spec.get("risk") or {}
   default_cooldown = ((risk.get("cooldown") or {}).get("value")) if isinstance(risk.get("cooldown"), dict) else None
 
-  symbol_refs: dict[str, str] = {"signal": resolved_signal_symbol, "trade": trade_symbol}
+  symbol_refs: dict[str, str] = {"signal": signal_symbol, "trade": trade_symbol}
   raw_symbols = atomic.get("symbols")
   if isinstance(raw_symbols, dict):
     for key, val in raw_symbols.items():
@@ -357,7 +338,7 @@ async def run_backtest_from_spec(
           symbol_refs[name.strip()] = ticker.strip().upper()
 
   def _daily_series(symbol_ref: str) -> list[float]:
-    resolved = symbol_refs.get(symbol_ref, resolved_signal_symbol)
+    resolved = symbol_refs.get(symbol_ref, signal_symbol)
     return daily_trade_close if resolved == trade_symbol else daily_signal_close
 
   idx4h_by_session: list[int | None] = [last_closed_4h_idx(row["decision_ts"]) for row in session_rows]
@@ -653,8 +634,7 @@ async def run_backtest_from_spec(
             "why": {
               "rule_id": rule_id,
               "action_id": action_id,
-              "signal_symbol": resolved_signal_symbol,
-              "is_fallback": used_fallback,
+              "signal_symbol": signal_symbol,
               "indicators": decision_indicator_values[i],
             },
             "pnl": trade_pnl,
@@ -695,13 +675,12 @@ async def run_backtest_from_spec(
 
   artifacts = {
     "resolved": {
-      "universe": {"signal_symbol": resolved_signal_symbol, "trade_symbol": trade_symbol},
+      "universe": {"signal_symbol": signal_symbol, "trade_symbol": trade_symbol},
       "calendar": {"type": "exchange", "value": "XNYS"},
       "execution": {"model": "MOC"},
-      "fallback": {"is_fallback": used_fallback},
     },
     "data_health": {
-      **compute_data_health(provider, resolved_signal_symbol, used_fallback),
+      **compute_data_health(provider, signal_symbol),
       "total_sessions": total_sessions,
       "used_sessions": len(session_rows),
       "skipped_sessions_count": len(skipped_sessions),

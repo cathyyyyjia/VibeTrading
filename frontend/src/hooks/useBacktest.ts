@@ -277,7 +277,7 @@ export function useBacktest(): UseBacktestReturn {
     setArtifacts(null);
     setSteps(buildInitialWorkspaceSteps());
     setProgress(0);
-    setStatusMessage("Waiting for run to start...");
+    setStatusMessage("Submitting strategy for parse...");
 
     try {
       const options: Record<string, unknown> = {};
@@ -295,7 +295,8 @@ export function useBacktest(): UseBacktestReturn {
     } catch (e) {
       console.error("Failed to start backtest:", e);
       setStatus("failed");
-      setError("Failed to start backtest. Please try again.");
+      const msg = e instanceof Error ? e.message : "Failed to start backtest. Please try again.";
+      setError(msg);
       setStatusMessage("Failed to initialize");
     }
   }, [filters, prompt, startTracking]);

@@ -59,7 +59,7 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
     );
   }
 
-  if (!trades || trades.length === 0) return null;
+  const hasTrades = Array.isArray(trades) && trades.length > 0;
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
@@ -83,7 +83,7 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
             </tr>
           </thead>
           <tbody>
-            {trades.map((trade, index) => (
+            {hasTrades ? trades!.map((trade, index) => (
               <tr key={index} className={`hover:bg-muted/20 transition-colors ${index < trades.length - 1 ? "border-b border-border/40" : ""}`}>
                 <td className="py-2.5 px-4 text-sm text-muted-foreground">{trade.entryTime || trade.timestamp}</td>
                 <td className="py-2.5 px-4 text-sm font-medium text-foreground font-mono">{trade.symbol}</td>
@@ -122,7 +122,17 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
                   {trade.reason || "-"}
                 </td>
               </tr>
-            ))}
+            )) : (
+              <tr className="border-b border-border/40">
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -30,7 +30,11 @@ class Settings(BaseSettings):
 
   llm_base_url: AnyHttpUrl = "https://api.openai.com/v1"
   llm_api_key: str | None = None
-  llm_model: str = "gpt-4.1-mini"
+  llm_model: str = "gpt-5-mini"
+  llm_request_timeout_seconds: int = 120
+  llm_max_retries: int = 2
+  llm_retry_backoff_seconds: float = 1.0
+  llm_semantic_repair_attempts: int = 1
 
   market_data_provider: str = "alpaca"
   polygon_api_key: str | None = None

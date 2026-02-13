@@ -60,9 +60,8 @@ function ParseContent({ step }: { step: StepInfo }) {
   const latestLog = step.logs[step.logs.length - 1] || '';
   const model = latestLog.match(/"model":"([^"]+)"/)?.[1];
   const llmUsed = latestLog.match(/"llm_used":(true|false)/)?.[1];
-  const fallbackApplied = latestLog.match(/"fallback_seed_applied":(true|false)/)?.[1];
+  const attempts = latestLog.match(/"llm_attempts":(\d+)/)?.[1];
   const llmUsedLabel = llmUsed === 'true' ? 'Yes' : llmUsed === 'false' ? 'No' : '-';
-  const fallbackLabel = fallbackApplied === 'true' ? 'Yes' : fallbackApplied === 'false' ? 'No' : '-';
 
   return (
     <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
@@ -75,7 +74,7 @@ function ParseContent({ step }: { step: StepInfo }) {
           LLM Driven: <span className="text-foreground">{llmUsedLabel}</span>
         </div>
         <div className="text-xs text-muted-foreground">
-          Fallback Seed: <span className="text-foreground">{fallbackLabel}</span>
+          Attempts: <span className="text-foreground">{attempts || '1'}</span>
         </div>
       </div>
     </div>

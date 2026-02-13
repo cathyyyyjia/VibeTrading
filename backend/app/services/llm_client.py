@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -48,7 +49,6 @@ class LlmClient:
 
     payload = {
       "model": self._model,
-      "temperature": 0,
       "response_format": response_format,
       "messages": [
         {"role": "system", "content": system_prompt},
@@ -56,24 +56,51 @@ class LlmClient:
       ],
     }
 
-    timeout = httpx.Timeout(30.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-      resp = await client.post(url, headers=headers, json=payload)
-      if resp.status_code >= 400 and json_schema is not None and resp.status_code == 400:
-        # Some models/endpoints reject complex JSON Schema keywords.
-        # Fallback to json_object keeps service available while spec_validator enforces hard rules.
-        fallback_payload = dict(payload)
-        fallback_payload["response_format"] = {"type": "json_object"}
-        resp = await client.post(url, headers=headers, json=fallback_payload)
+    timeout = httpx.Timeout(float(settings.llm_request_timeout_seconds), connect=10.0)
+    max_retries = max(0, int(settings.llm_max_retries))
+    retryable_status = {408, 429, 500, 502, 503, 504}
 
-      if resp.status_code >= 400:
-        raise AppError(
-          "INTERNAL",
-          "LLM request failed",
-          {"status": resp.status_code, "body": resp.text[:2000]},
-          http_status=502,
-        )
-      data = resp.json()
+    data: dict[str, Any] | None = None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+      for attempt in range(max_retries + 1):
+        try:
+          resp = await client.post(url, headers=headers, json=payload)
+        except httpx.TimeoutException as exc:
+          if attempt < max_retries:
+            await asyncio.sleep(float(settings.llm_retry_backoff_seconds) * (attempt + 1))
+            continue
+          raise AppError(
+            "INTERNAL",
+            "LLM request timed out",
+            {"attempts": attempt + 1, "timeout_seconds": settings.llm_request_timeout_seconds, "error": str(exc)},
+            http_status=504,
+          )
+        except httpx.HTTPError as exc:
+          if attempt < max_retries:
+            await asyncio.sleep(float(settings.llm_retry_backoff_seconds) * (attempt + 1))
+            continue
+          raise AppError(
+            "INTERNAL",
+            "LLM transport failed",
+            {"attempts": attempt + 1, "error": str(exc)},
+            http_status=502,
+          )
+
+        if resp.status_code >= 400:
+          if resp.status_code in retryable_status and attempt < max_retries:
+            await asyncio.sleep(float(settings.llm_retry_backoff_seconds) * (attempt + 1))
+            continue
+          raise AppError(
+            "INTERNAL",
+            "LLM request failed",
+            {"status": resp.status_code, "body": resp.text[:2000], "attempts": attempt + 1},
+            http_status=502,
+          )
+        data = resp.json()
+        break
+
+    if data is None:
+      raise AppError("INTERNAL", "LLM request failed without response payload", {}, http_status=502)
 
     try:
       content = data["choices"][0]["message"]["content"]

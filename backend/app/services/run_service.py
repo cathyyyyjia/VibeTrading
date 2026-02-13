@@ -17,7 +17,7 @@ from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
 from app.services.backtest_engine import run_backtest_from_spec
 from app.services.storage_service import upload_artifact_content, storage_enabled
-from app.services.spec_builder import compute_strategy_version, nl_to_strategy_spec
+from app.services.spec_builder import nl_to_strategy_spec
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, u
     raise AppError("VALIDATION_ERROR", "StrategySpec must be an object", {"type": str(type(spec))})
 
   if spec.get("strategy_version") in (None, ""):
-    spec["strategy_version"] = compute_strategy_version({k: v for k, v in spec.items() if k != "strategy_version"})
+    spec["strategy_version"] = "v0"
 
   strategy = Strategy(
     name=str(spec.get("name") or "Untitled"),
@@ -172,7 +172,6 @@ async def execute_run(
         "resolved_universe": spec.get("universe"),
         "resolved_calendar": spec.get("calendar"),
         "execution_model": (spec.get("execution") or {}).get("model"),
-        "fallback": None,
       }
       await _upsert_artifact(
         db,
@@ -195,7 +194,7 @@ async def execute_run(
             "strategy_version": strategy.strategy_version,
             "model": settings.llm_model,
             "llm_used": bool((spec.get("meta") or {}).get("llm_used")),
-            "fallback_seed_applied": bool((spec.get("meta") or {}).get("fallback_seed_applied")),
+            "llm_attempts": int((spec.get("meta") or {}).get("llm_attempts") or 1),
           },
         ),
       )
