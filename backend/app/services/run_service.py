@@ -15,7 +15,6 @@ from app.core.config import settings
 from app.db.engine import SessionLocal
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
-from app.db.models import User
 from app.services.backtest_engine import run_backtest_from_spec
 from app.services.storage_service import upload_artifact_content, storage_enabled
 from app.services.spec_builder import compute_strategy_version, nl_to_strategy_spec
@@ -58,7 +57,13 @@ async def _clear_queue_lock(run_id: uuid.UUID) -> None:
     logger.exception("run_queue_lock_clear_failed", extra={"run_id": str(run_id)})
 
 
-async def _set_step_state(db: AsyncSession, run_id: uuid.UUID, step_id: StepId, state: str, log: dict[str, Any] | None = None) -> None:
+async def _set_step_state(
+  db: AsyncSession,
+  run_id: uuid.UUID,
+  step_id: StepId,
+  state: str,
+  log: dict[str, Any] | None = None,
+) -> None:
   step = (await db.execute(select(RunStep).where(RunStep.run_id == run_id, RunStep.step_id == step_id))).scalar_one()
   step.state = state
   if log is not None:
@@ -165,6 +170,7 @@ async def execute_run(
         _log("INFO", "Parsing strategy spec", {"model": settings.llm_model}),
       )
       await _upsert_artifact(db, run_id, "dsl.json", "json", f"/api/runs/{run_id}/artifacts/dsl.json", content=spec)
+      await _set_step_state(db, run_id, "parse", "RUNNING", _log("INFO", "DSL artifact persisted"))
       inputs_snapshot = {
         "strategy_version": strategy.strategy_version,
         "resolved_universe": spec.get("universe"),
@@ -180,6 +186,7 @@ async def execute_run(
         f"/api/runs/{run_id}/artifacts/inputs_snapshot.json",
         content=inputs_snapshot,
       )
+      await _set_step_state(db, run_id, "parse", "RUNNING", _log("INFO", "Input snapshot generated"))
       await _set_step_state(
         db,
         run_id,
@@ -207,9 +214,22 @@ async def execute_run(
       await _set_step_state(db, run_id, "plan", "DONE", _log("INFO", "ExecutionPlan compiled"))
 
       await _set_step_state(db, run_id, "data", "RUNNING", _log("INFO", "Fetching minute data"))
-      await _set_step_state(db, run_id, "data", "DONE", _log("INFO", "Data ready", {"start_date": start_date, "end_date": end_date}))
+      await _set_step_state(db, run_id, "data", "RUNNING", _log("INFO", "Validating session coverage"))
+      await _set_step_state(
+        db,
+        run_id,
+        "data",
+        "DONE",
+        _log("INFO", "Data ready", {"start_date": start_date, "end_date": end_date}),
+      )
 
-      await _set_step_state(db, run_id, "backtest", "RUNNING", _log("INFO", "Running backtest", {"start_date": start_date, "end_date": end_date}))
+      await _set_step_state(
+        db,
+        run_id,
+        "backtest",
+        "RUNNING",
+        _log("INFO", "Running backtest", {"start_date": start_date, "end_date": end_date}),
+      )
       backtest_step = (await db.execute(select(RunStep).where(RunStep.run_id == run_id, RunStep.step_id == "backtest"))).scalar_one()
       last_persisted = 0
 
@@ -263,6 +283,7 @@ async def execute_run(
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Generating report"))
       report = jsonable_encoder({"kpis": result.kpis, "equity": result.equity, "trades": result.trades})
       await _upsert_artifact(db, run_id, "report.json", "json", f"/api/runs/{run_id}/report", content=report)
+      await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Report artifact persisted"))
       await _upsert_artifact(
         db,
         run_id,
@@ -271,6 +292,7 @@ async def execute_run(
         f"/api/runs/{run_id}/artifacts/kpis.json",
         content={"kpis": result.kpis},
       )
+      await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "KPI snapshot generated"))
       report_md = f"# Backtest Report\n\n- Trades: {len(result.trades)}\n- Return%: {result.kpis.get('return_pct'):.2f}\n- Sharpe: {result.kpis.get('sharpe'):.2f}\n- MaxDD%: {result.kpis.get('max_dd_pct'):.2f}\n"
       await _upsert_artifact(db, run_id, "report.md", "markdown", f"/api/runs/{run_id}/artifacts/report.md", content={"markdown": report_md})
       await _upsert_artifact(db, run_id, "equity.png", "image", f"/api/runs/{run_id}/artifacts/equity.png", content=None)
@@ -317,7 +339,13 @@ async def execute_run(
       run.error = {"code": e.code, "message": e.message, "details": e.details or {}}
       await db.commit()
       try:
-        await _set_step_state(db, run_id, "backtest", "FAILED", _log("ERROR", "Run failed", {"code": e.code, "message": e.message}))
+        await _set_step_state(
+          db,
+          run_id,
+          "backtest",
+          "FAILED",
+          _log("ERROR", "Run failed", {"code": e.code, "message": e.message}),
+        )
       except Exception:
         pass
     except Exception as e:
@@ -326,5 +354,15 @@ async def execute_run(
       run.progress = 100
       run.error = {"code": "INTERNAL", "message": "Unhandled error", "details": {"error": str(e)}}
       await db.commit()
+      try:
+        await _set_step_state(
+          db,
+          run_id,
+          "backtest",
+          "FAILED",
+          _log("ERROR", "Unhandled failure", {"error": str(e)}),
+        )
+      except Exception:
+        pass
     finally:
       await _clear_queue_lock(run_id)

@@ -145,6 +145,60 @@ function ErrorLogs({ logs }: { logs: string[] }) {
   );
 }
 
+function normalizeLogMessage(log: string): string {
+  return log
+    .replace(/^\d{1,2}:\d{2}:\d{2}\s*/i, "")
+    .replace(/^\[(DEBUG|INFO|WARN|ERROR)\]\s*/i, "")
+    .trim();
+}
+
+function buildSubtasks(step: StepInfo): Array<{ label: string; status: "queued" | "running" | "done" | "error" }> {
+  const labels = step.logs
+    .map(normalizeLogMessage)
+    .filter(Boolean);
+  if (labels.length === 0) return [];
+
+  return labels.map((label, idx) => {
+    const last = idx === labels.length - 1;
+    if (step.status === "running") {
+      return { label, status: last ? "running" : "done" };
+    }
+    if (step.status === "done") {
+      return { label, status: "done" };
+    }
+    if (step.status === "error") {
+      return { label, status: last ? "error" : "done" };
+    }
+    return { label, status: "queued" };
+  });
+}
+
+function SubtaskStatusIcon({ status }: { status: "queued" | "running" | "done" | "error" }) {
+  if (status === "running") return <Loader2 className="w-3.5 h-3.5 text-foreground animate-spin shrink-0" />;
+  if (status === "done") return <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+  if (status === "error") return <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />;
+  return <Circle className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />;
+}
+
+function SubtaskList({ step }: { step: StepInfo }) {
+  const tasks = buildSubtasks(step);
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
+      <div className="text-xs font-medium text-foreground mb-2">Subtasks</div>
+      <div className="space-y-1.5">
+        {tasks.slice(-5).map((task, idx) => (
+          <div key={`${task.label}-${idx}`} className="flex items-center gap-2">
+            <SubtaskStatusIcon status={task.status} />
+            <span className="text-xs text-muted-foreground truncate" title={task.label}>{task.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
   const isActive = step.status === 'running' || step.status === 'done' || step.status === 'error';
   const isParse = step.key === 'parse';
@@ -218,6 +272,9 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
             )}
             {isBacktest && step.status !== 'error' && (
               <BacktestContent progress={progress} step={step} />
+            )}
+            {!isBacktest && step.status !== 'error' && (
+              <SubtaskList step={step} />
             )}
             {step.status === 'error' && (
               <ErrorLogs logs={step.logs} />

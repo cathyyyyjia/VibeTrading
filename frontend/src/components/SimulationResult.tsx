@@ -62,7 +62,7 @@ export default function SimulationResult({ report, status, runId }: SimulationRe
 
   useEffect(() => {
     let cancelled = false;
-    if (!runId) {
+    if (!runId || status !== 'completed') {
       setSummary(null);
       return () => {
         cancelled = true;
@@ -82,7 +82,7 @@ export default function SimulationResult({ report, status, runId }: SimulationRe
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, status]);
 
   if (!showResult) return null;
 

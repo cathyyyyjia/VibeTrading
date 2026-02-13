@@ -41,7 +41,9 @@ async def ensure_user_from_claims(
   name = None
   user_metadata = payload.get("user_metadata")
   if isinstance(user_metadata, dict):
-    nm = user_metadata.get("name")
+    nm = user_metadata.get("display_name")
+    if not isinstance(nm, str) or not nm.strip():
+      nm = user_metadata.get("name")
     if isinstance(nm, str):
       name = nm
   if name is None and isinstance(payload.get("name"), str):

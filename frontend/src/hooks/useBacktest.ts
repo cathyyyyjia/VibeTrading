@@ -35,6 +35,7 @@ export interface UseBacktestReturn {
 const POLL_INTERVAL_INITIAL = 1500;
 const POLL_INTERVAL_FALLBACK = 12000;
 const POLL_INTERVAL_MAX = 20000;
+const POLL_INTERVAL_REALTIME_HEARTBEAT = 30000;
 const RUN_REALTIME_ENABLED = ((import.meta as any).env?.VITE_RUN_REALTIME_ENABLED ?? "true") !== "false";
 
 function buildInitialWorkspaceSteps(): StepInfo[] {
@@ -70,6 +71,7 @@ export function useBacktest(): UseBacktestReturn {
   const currentRunIdRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const errorStreakRef = useRef(0);
+  const realtimeSubscribedRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -78,6 +80,7 @@ export function useBacktest(): UseBacktestReturn {
         void supabase.removeChannel(realtimeRef.current);
         realtimeRef.current = null;
       }
+      realtimeSubscribedRef.current = false;
     };
   }, []);
 
@@ -86,6 +89,7 @@ export function useBacktest(): UseBacktestReturn {
       void supabase.removeChannel(realtimeRef.current);
       realtimeRef.current = null;
     }
+    realtimeSubscribedRef.current = false;
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -186,9 +190,11 @@ export function useBacktest(): UseBacktestReturn {
           if (pollingRef.current) {
             clearTimeout(pollingRef.current);
           }
+          const realtimeHealthy = RUN_REALTIME_ENABLED && realtimeSubscribedRef.current;
+          const scheduleDelay = realtimeHealthy ? Math.max(nextDelay, POLL_INTERVAL_REALTIME_HEARTBEAT) : nextDelay;
           pollingRef.current = setTimeout(() => {
             void pollStatus(rid, "poll");
-          }, nextDelay);
+          }, scheduleDelay);
         }
       }
     },
@@ -224,6 +230,11 @@ export function useBacktest(): UseBacktestReturn {
           }
         )
         .subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            realtimeSubscribedRef.current = true;
+          } else if (status === "CLOSED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            realtimeSubscribedRef.current = false;
+          }
           if (status === "SUBSCRIBED" && currentRunIdRef.current === rid) {
             void pollStatus(rid, "realtime");
           }
