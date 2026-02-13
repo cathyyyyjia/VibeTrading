@@ -20,6 +20,13 @@ class Settings(BaseSettings):
 
   supabase_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_SECRET_KEY"))
   supabase_project_url: str | None = None
+  auth_mode: str = "local_jwt"
+  supabase_jwt_issuer: str | None = None
+  supabase_jwt_audiences: str = "authenticated"
+  supabase_jwks_cache_ttl_seconds: int = 600
+  supabase_storage_enabled: bool = False
+  supabase_storage_bucket: str = "run-artifacts"
+  supabase_storage_signed_url_ttl_seconds: int = 3600
 
   llm_base_url: AnyHttpUrl = "https://api.openai.com/v1"
   llm_api_key: str | None = None
@@ -39,6 +46,10 @@ class Settings(BaseSettings):
   @property
   def allowed_origins_list(self) -> list[str]:
     return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+  @property
+  def supabase_jwt_audiences_list(self) -> list[str]:
+    return [a.strip() for a in self.supabase_jwt_audiences.split(",") if a.strip()]
 
 
 settings = Settings()

@@ -4,13 +4,16 @@ import time
 from typing import Any
 
 import httpx
+import jwt
 from fastapi import Request
+from jwt import InvalidTokenError
 
 from app.core.config import settings
 from app.core.errors import AppError, error_response
 
 _TOKEN_CACHE_TTL_SECONDS = 60.0
 _token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_jwks_cache: tuple[float, dict[str, Any]] = (0.0, {})
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -73,6 +76,149 @@ async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
   return claims
 
 
+def _normalized_jwt_claims(claims: dict[str, Any]) -> dict[str, Any]:
+  return {
+    "sub": claims.get("sub"),
+    "email": claims.get("email"),
+    "role": claims.get("role"),
+    "app_metadata": claims.get("app_metadata") if isinstance(claims.get("app_metadata"), dict) else {},
+    "user_metadata": claims.get("user_metadata") if isinstance(claims.get("user_metadata"), dict) else {},
+    "name": claims.get("name"),
+  }
+
+
+def _expected_jwt_issuer() -> str:
+  if settings.supabase_jwt_issuer:
+    return settings.supabase_jwt_issuer.rstrip("/")
+  if not settings.supabase_project_url:
+    raise AppError("CONFIG_ERROR", "SUPABASE_PROJECT_URL or SUPABASE_JWT_ISSUER is required")
+  return settings.supabase_project_url.rstrip("/") + "/auth/v1"
+
+
+def _jwks_url() -> str:
+  if not settings.supabase_project_url:
+    raise AppError("CONFIG_ERROR", "SUPABASE_PROJECT_URL is required")
+  return settings.supabase_project_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+
+
+async def _fetch_jwks() -> dict[str, Any]:
+  try:
+    async with httpx.AsyncClient(timeout=10) as client:
+      resp = await client.get(_jwks_url())
+  except Exception as e:
+    raise AppError("UNAUTHORIZED", "JWKS fetch failed", {"error": str(e)}, http_status=401)
+
+  if resp.status_code != 200:
+    raise AppError(
+      "UNAUTHORIZED",
+      "JWKS fetch failed",
+      {"status_code": resp.status_code, "body": resp.text[:300]},
+      http_status=401,
+    )
+
+  payload = resp.json()
+  keys = payload.get("keys")
+  if not isinstance(keys, list):
+    raise AppError("UNAUTHORIZED", "JWKS is invalid", {"reason": "missing keys"}, http_status=401)
+
+  parsed: dict[str, Any] = {}
+  for jwk in keys:
+    if isinstance(jwk, dict):
+      kid = jwk.get("kid")
+      if isinstance(kid, str) and kid:
+        parsed[kid] = jwk
+  if not parsed:
+    raise AppError("UNAUTHORIZED", "JWKS is invalid", {"reason": "no usable keys"}, http_status=401)
+  return parsed
+
+
+async def _get_jwk_for_kid(kid: str) -> dict[str, Any]:
+  global _jwks_cache
+  now = time.monotonic()
+  expires_at, keys = _jwks_cache
+  if now >= expires_at or kid not in keys:
+    keys = await _fetch_jwks()
+    ttl = max(60, int(settings.supabase_jwks_cache_ttl_seconds))
+    _jwks_cache = (time.monotonic() + ttl, keys)
+  jwk = keys.get(kid)
+  if not isinstance(jwk, dict):
+    raise AppError("UNAUTHORIZED", "Signing key not found", {"kid": kid}, http_status=401)
+  return jwk
+
+
+async def verify_supabase_jwt(token: str) -> dict[str, Any]:
+  try:
+    header = jwt.get_unverified_header(token)
+  except Exception as e:
+    raise AppError("UNAUTHORIZED", "Invalid token header", {"error": str(e)}, http_status=401)
+
+  alg = header.get("alg")
+  if not isinstance(alg, str):
+    raise AppError("UNAUTHORIZED", "Invalid token algorithm", http_status=401)
+
+  audience = settings.supabase_jwt_audiences_list
+  if not audience:
+    audience = ["authenticated"]
+  issuer = _expected_jwt_issuer()
+
+  try:
+    if alg.upper() == "RS256":
+      kid = header.get("kid")
+      if not isinstance(kid, str) or not kid:
+        raise AppError("UNAUTHORIZED", "Token is missing key id", http_status=401)
+      jwk = await _get_jwk_for_kid(kid)
+      key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
+      claims = jwt.decode(
+        token,
+        key=key,
+        algorithms=["RS256"],
+        audience=audience,
+        issuer=issuer,
+      )
+    elif alg.upper() == "HS256":
+      if not settings.supabase_secret_key:
+        raise AppError("CONFIG_ERROR", "SUPABASE_SECRET_KEY is required for HS256 tokens")
+      claims = jwt.decode(
+        token,
+        key=settings.supabase_secret_key,
+        algorithms=["HS256"],
+        audience=audience,
+        issuer=issuer,
+      )
+    else:
+      raise AppError("UNAUTHORIZED", "Unsupported token algorithm", {"alg": alg}, http_status=401)
+  except AppError:
+    raise
+  except InvalidTokenError as e:
+    raise AppError("UNAUTHORIZED", "Invalid token", {"error": str(e)}, http_status=401)
+  except Exception as e:
+    raise AppError("UNAUTHORIZED", "Token verification failed", {"error": str(e)}, http_status=401)
+
+  sub = claims.get("sub")
+  if not isinstance(sub, str) or not sub:
+    raise AppError("UNAUTHORIZED", "Invalid token payload", {"reason": "missing user id"}, http_status=401)
+  return _normalized_jwt_claims(claims)
+
+
+async def verify_access_token(token: str) -> dict[str, Any]:
+  now = time.monotonic()
+  cached = _token_cache.get(token)
+  if cached is not None:
+    expires_at, claims = cached
+    if expires_at > now:
+      return claims
+    _token_cache.pop(token, None)
+
+  mode = settings.auth_mode.strip().lower()
+  if mode == "remote_userinfo":
+    claims = await verify_supabase_userinfo(token)
+  else:
+    claims = await verify_supabase_jwt(token)
+
+  _token_cache[token] = (time.monotonic() + _TOKEN_CACHE_TTL_SECONDS, claims)
+  return claims
+
+
 def _is_public_path(path: str) -> bool:
   return path.startswith("/api/health")
 
@@ -87,7 +233,7 @@ async def attach_auth_claims(request: Request, call_next):
     return error_response("UNAUTHORIZED", "Missing bearer token", status=401)
 
   try:
-    claims = await verify_supabase_userinfo(token)
+    claims = await verify_access_token(token)
   except AppError as exc:
     return error_response(exc.code, exc.message, exc.details, status=exc.http_status)
 
@@ -106,5 +252,5 @@ async def get_auth_claims(request: Request) -> tuple[str, dict[str, Any]]:
   token = _extract_bearer_token(authorization)
   if token is None:
     raise AppError("UNAUTHORIZED", "Missing bearer token", http_status=401)
-  claims = await verify_supabase_userinfo(token)
+  claims = await verify_access_token(token)
   return "supabase", claims

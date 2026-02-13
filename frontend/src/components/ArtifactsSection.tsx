@@ -6,7 +6,7 @@
 import { Copy, Download, FileText, FileSpreadsheet, Code2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/contexts/I18nContext';
-import { getRunArtifact, type RunStatusResponse } from '@/lib/api';
+import { downloadRunArtifact, getRunArtifact, type RunStatusResponse } from '@/lib/api';
 
 interface ArtifactsSectionProps {
   runId: string;
@@ -31,6 +31,20 @@ export default function ArtifactsSection({ runId, artifacts }: ArtifactsSectionP
     }
   };
 
+  const handleDownload = async (name: string, fileName: string) => {
+    try {
+      const blob = await downloadRunArtifact(runId, name);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error(t('history.loadFailed'));
+    }
+  };
+
   return (
     <div className="mt-4 border-t border-border pt-4">
       <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
@@ -52,15 +66,14 @@ export default function ArtifactsSection({ runId, artifacts }: ArtifactsSectionP
         </button>
 
         {/* Backtest Report - Download */}
-        <a
-          href={artifacts.reportUrl || '#'}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
           onClick={(e) => {
             if (!artifacts.reportUrl || artifacts.reportUrl === '#') {
               e.preventDefault();
               toast.info(t('artifact.comingSoon'), { description: t('artifact.reportComingSoonDesc') });
+              return;
             }
+            void handleDownload('report.json', `report-${runId}.json`);
           }}
           className="w-full flex items-center justify-between py-2.5 px-3 rounded-md hover:bg-muted/50 transition-colors group"
         >
@@ -71,17 +84,17 @@ export default function ArtifactsSection({ runId, artifacts }: ArtifactsSectionP
             <span className="text-xs font-medium text-foreground">{t('artifact.backtestReport')}</span>
           </div>
           <Download className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-        </a>
+        </button>
 
         {/* Trades CSV - Download */}
-        <a
-          href={artifacts.tradesCsvUrl || '#'}
-          download
+        <button
           onClick={(e) => {
             if (!artifacts.tradesCsvUrl || artifacts.tradesCsvUrl === '#') {
               e.preventDefault();
               toast.info(t('artifact.comingSoon'), { description: t('artifact.csvComingSoonDesc') });
+              return;
             }
+            void handleDownload('trades.csv', `trades-${runId}.csv`);
           }}
           className="w-full flex items-center justify-between py-2.5 px-3 rounded-md hover:bg-muted/50 transition-colors group"
         >
@@ -92,7 +105,7 @@ export default function ArtifactsSection({ runId, artifacts }: ArtifactsSectionP
             <span className="text-xs font-medium text-foreground">{t('artifact.tradesCsv')}</span>
           </div>
           <Download className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-        </a>
+        </button>
       </div>
     </div>
   );

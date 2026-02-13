@@ -1,12 +1,45 @@
 const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL ?? "";
 import { supabase } from "@/lib/supabase";
 
-async function buildHeaders(init?: Record<string, string>): Promise<Record<string, string>> {
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const API_MAX_RETRIES = 2;
+
+async function buildHeaders(init?: Record<string, string>, tokenOverride?: string | null): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = tokenOverride ?? data.session?.access_token;
   const h: Record<string, string> = { ...(init || {}) };
   if (token) h["Authorization"] = `Bearer ${token}`;
   return h;
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  let refreshedToken: string | null = null;
+  for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt += 1) {
+    const headers = await buildHeaders(init?.headers as Record<string, string> | undefined, refreshedToken);
+    try {
+      const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
+
+      if (res.status === 401 && attempt === 0) {
+        const refreshed = await supabase.auth.refreshSession();
+        refreshedToken = refreshed.data.session?.access_token ?? null;
+        if (refreshedToken) {
+          continue;
+        }
+      }
+
+      if (attempt < API_MAX_RETRIES && RETRYABLE_STATUS.has(res.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt >= API_MAX_RETRIES) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw new Error("Request failed after retries");
 }
 
 export interface CreateRunResponse {
@@ -142,19 +175,31 @@ function findArtifactUri(artifacts: V0ArtifactRef[], name: string): string | nul
   return a ? a.uri : null;
 }
 
+function toAbsoluteApiUrl(uri: string): string {
+  if (uri.startsWith("http://") || uri.startsWith("https://")) return uri;
+  if (uri.startsWith("/")) return `${baseUrl}${uri}`;
+  return uri;
+}
+
 export async function getRunArtifact(runId: string, name: string): Promise<{ name: string; type: string; uri: string; content: any }> {
-  const res = await fetch(`${baseUrl}/api/runs/${runId}/artifacts/${encodeURIComponent(name)}`, { headers: await buildHeaders() });
+  const res = await apiFetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}`);
   if (!res.ok) throw new Error(`Failed to get artifact: ${res.statusText}`);
   return res.json();
+}
+
+export async function downloadRunArtifact(runId: string, name: string): Promise<Blob> {
+  const res = await apiFetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}?download=true`);
+  if (!res.ok) throw new Error(`Failed to download artifact: ${res.statusText}`);
+  return await res.blob();
 }
 
 export async function createRun(prompt: string, options?: Record<string, unknown>): Promise<CreateRunResponse> {
   const mode = (options?.mode as V0Mode | undefined) ?? "BACKTEST_ONLY";
   const startDate = typeof options?.startDate === "string" ? options.startDate : "2025-01-01";
   const endDate = typeof options?.endDate === "string" ? options.endDate : "2025-12-31";
-  const res = await fetch(`${baseUrl}/api/runs`, {
+  const res = await apiFetch(`/api/runs`, {
     method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       input_type: "NATURAL_LANGUAGE",
       nl: prompt,
@@ -169,14 +214,12 @@ export async function createRun(prompt: string, options?: Record<string, unknown
 }
 
 export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
-  const res = await fetch(`${baseUrl}/api/runs/${runId}/status`, { headers: await buildHeaders() });
+  const res = await apiFetch(`/api/runs/${runId}/status`);
   if (!res.ok) throw new Error(`Failed to get status: ${res.statusText}`);
   const data = (await res.json()) as V0RunStatusResponse;
-  const reportUri = findArtifactUri(data.artifacts, "report.json");
-  const tradesCsvUri = findArtifactUri(data.artifacts, "trades.csv");
   const dslUri = findArtifactUri(data.artifacts, "dsl.json");
-  const reportUrl = reportUri ? `${baseUrl}${reportUri}` : `${baseUrl}/api/runs/${runId}/report`;
-  const tradesCsvUrl = tradesCsvUri ? `${baseUrl}${tradesCsvUri}` : "";
+  const reportUrl = `${baseUrl}/api/runs/${runId}/artifacts/report.json?download=true`;
+  const tradesCsvUrl = `${baseUrl}/api/runs/${runId}/artifacts/trades.csv?download=true`;
   const steps = data.steps.map(mapV0StepToStepInfo);
   return {
     runId: data.run_id,
@@ -184,7 +227,7 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
     steps,
     progress: data.progress,
     artifacts: {
-      dsl: dslUri ? `${baseUrl}${dslUri}` : "",
+      dsl: dslUri ? toAbsoluteApiUrl(dslUri) : "",
       reportUrl,
       tradesCsvUrl,
     },
@@ -192,7 +235,7 @@ export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
 }
 
 export async function getRunReport(runId: string): Promise<RunReportResponse> {
-  const res = await fetch(`${baseUrl}/api/runs/${runId}/report`, { headers: await buildHeaders() });
+  const res = await apiFetch(`/api/runs/${runId}/report`);
   if (!res.ok) throw new Error(`Failed to get report: ${res.statusText}`);
   const data = (await res.json()) as V0BacktestReportResponse;
   const kpis: LegacyKPIs = {
@@ -228,17 +271,13 @@ export async function getRunReport(runId: string): Promise<RunReportResponse> {
 }
 
 export async function deployRun(runId: string, mode: "paper" | "live"): Promise<DeployResponse> {
-  const res = await fetch(`${baseUrl}/api/runs/${runId}/deploy`, {
+  const res = await apiFetch(`/api/runs/${runId}/deploy`, {
     method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
   });
   if (!res.ok) throw new Error(`Failed to deploy: ${res.statusText}`);
   return res.json();
-}
-
-export function getTradesCsvUrl(runId: string): string {
-  return `${baseUrl}/api/runs/${runId}/report?format=csv`;
 }
 
 export interface HistoryEntry {
@@ -271,7 +310,7 @@ export async function getHistory(): Promise<GetHistoryResponse> {
   };
   type V0HistoryResponse = { history: V0HistoryEntry[] };
 
-  const res = await fetch(`${baseUrl}/api/runs/history`, { headers: await buildHeaders() });
+  const res = await apiFetch(`/api/runs/history`);
   if (!res.ok) throw new Error(`Failed to get history: ${res.statusText}`);
   const data = (await res.json()) as V0HistoryResponse;
 
@@ -303,10 +342,52 @@ export async function getHistory(): Promise<GetHistoryResponse> {
 }
 
 export async function deleteStrategy(strategyId: string): Promise<void> {
-  const res = await fetch(`${baseUrl}/api/strategies/${strategyId}`, {
+  const res = await apiFetch(`/api/strategies/${strategyId}`, {
     method: "DELETE",
-    headers: await buildHeaders(),
   });
   if (!res.ok) throw new Error(`Failed to delete strategy: ${res.statusText}`);
 }
 
+export interface UserProfile {
+  userId: string;
+  email: string | null;
+  displayName: string | null;
+  createdAt: string;
+  lastSignedInAt: string | null;
+}
+
+type V0UserProfileResponse = {
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+  created_at: string;
+  last_signed_in_at: string | null;
+};
+
+function mapUserProfile(data: V0UserProfileResponse): UserProfile {
+  return {
+    userId: data.user_id,
+    email: data.email,
+    displayName: data.display_name,
+    createdAt: data.created_at,
+    lastSignedInAt: data.last_signed_in_at,
+  };
+}
+
+export async function getMyProfile(): Promise<UserProfile> {
+  const res = await apiFetch(`/api/users/me`);
+  if (!res.ok) throw new Error(`Failed to get profile: ${res.statusText}`);
+  const data = (await res.json()) as V0UserProfileResponse;
+  return mapUserProfile(data);
+}
+
+export async function updateMyProfile(payload: { displayName: string | null }): Promise<UserProfile> {
+  const res = await apiFetch(`/api/users/me`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: payload.displayName }),
+  });
+  if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
+  const data = (await res.json()) as V0UserProfileResponse;
+  return mapUserProfile(data);
+}

@@ -7,11 +7,20 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import OAuthIdentity, User
+from app.core.errors import AppError
+from app.db.models import User
 
 
 def _now() -> datetime:
   return datetime.now(timezone.utc)
+
+
+def _coerce_uuid(subject: str) -> uuid.UUID | None:
+  try:
+    return uuid.UUID(subject)
+  except Exception:
+    return None
+
 
 async def ensure_user_from_claims(
   db: AsyncSession,
@@ -21,7 +30,13 @@ async def ensure_user_from_claims(
   touch_last_signed_in: bool = False,
   sync_profile: bool = False,
 ) -> User:
+  _ = provider
   subject = payload.get("sub")
+  subject_text = str(subject) if subject is not None else ""
+  subject_uuid = _coerce_uuid(subject_text)
+  if subject_uuid is None:
+    raise AppError("UNAUTHORIZED", "invalid subject in token", {"sub": subject_text}, http_status=401)
+
   email = payload.get("email") if isinstance(payload.get("email"), str) else None
   name = None
   user_metadata = payload.get("user_metadata")
@@ -31,59 +46,18 @@ async def ensure_user_from_claims(
       name = nm
   if name is None and isinstance(payload.get("name"), str):
     name = payload.get("name")
-  return await upsert_oauth_identity(
-    db,
-    provider=provider,
-    subject=str(subject),
-    email=email,
-    name=name,
-    profile=payload,
-    touch_last_signed_in=touch_last_signed_in,
-    sync_profile=sync_profile,
-  )
-
-async def upsert_oauth_identity(
-  db: AsyncSession,
-  *,
-  provider: str,
-  subject: str,
-  email: str | None,
-  name: str | None,
-  profile: dict[str, Any] | None,
-  touch_last_signed_in: bool = False,
-  sync_profile: bool = False,
-) -> User:
-  identity = (
-    await db.execute(select(OAuthIdentity).where(OAuthIdentity.provider == provider, OAuthIdentity.subject == subject))
-  ).scalar_one_or_none()
-
-  if identity is None:
-    user = User(email=email, name=name, last_signed_in_at=_now())
+  user = (await db.execute(select(User).where(User.id == subject_uuid))).scalar_one_or_none()
+  if user is None:
+    user = User(id=subject_uuid, email=email, name=name, last_signed_in_at=_now())
     db.add(user)
-    await db.flush()
-    identity = OAuthIdentity(
-      user_id=user.id,
-      provider=provider,
-      subject=subject,
-      email=email,
-      profile=profile,
-    )
-    db.add(identity)
     await db.commit()
     await db.refresh(user)
     return user
 
-  user = (await db.execute(select(User).where(User.id == identity.user_id))).scalar_one()
   changed = False
   now = _now()
 
   if sync_profile:
-    if identity.email != email:
-      identity.email = email
-      changed = True
-    if identity.profile != profile:
-      identity.profile = profile
-      changed = True
     if email is not None and user.email != email:
       user.email = email
       changed = True
@@ -104,7 +78,20 @@ async def upsert_oauth_identity(
   return user
 
 
-async def get_user_with_identities(db: AsyncSession, user_id: uuid.UUID) -> tuple[User, list[OAuthIdentity]]:
-  user = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
-  identities = (await db.execute(select(OAuthIdentity).where(OAuthIdentity.user_id == user_id))).scalars().all()
-  return user, list(identities)
+async def update_user_profile(
+  db: AsyncSession,
+  *,
+  user: User,
+  name: str | None,
+) -> User:
+  changed = False
+  clean_name = name.strip() if isinstance(name, str) else None
+  if clean_name == "":
+    clean_name = None
+  if user.name != clean_name:
+    user.name = clean_name
+    changed = True
+  if changed:
+    await db.commit()
+    await db.refresh(user)
+  return user

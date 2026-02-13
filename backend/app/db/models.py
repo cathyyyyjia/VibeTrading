@@ -25,32 +25,15 @@ StepState = Literal["PENDING", "RUNNING", "DONE", "FAILED", "SKIPPED"]
 class User(Base):
   __tablename__ = "users"
 
-  id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("auth.users.id", ondelete="CASCADE"), primary_key=True)
   email: Mapped[str | None] = mapped_column(Text, nullable=True)
   name: Mapped[str | None] = mapped_column(Text, nullable=True)
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
   updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
   last_signed_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-  identities: Mapped[list["OAuthIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
   strategies: Mapped[list["Strategy"]] = relationship(back_populates="user")
   runs: Mapped[list["Run"]] = relationship(back_populates="user")
-
-
-class OAuthIdentity(Base):
-  __tablename__ = "oauth_identities"
-
-  id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-  user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-  provider: Mapped[str] = mapped_column(String(32), nullable=False)
-  subject: Mapped[str] = mapped_column(String(256), nullable=False)
-  email: Mapped[str | None] = mapped_column(Text, nullable=True)
-  profile: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
-  created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-
-  user: Mapped["User"] = relationship(back_populates="identities")
-
-  __table_args__ = (Index("ix_oauth_identities_provider_subject", "provider", "subject", unique=True),)
 
 
 class Strategy(Base):

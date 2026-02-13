@@ -12,6 +12,29 @@ depends_on = None
 def upgrade() -> None:
   op.execute(
     """
+    DROP POLICY IF EXISTS alembic_version_no_client_access ON public.alembic_version;
+    DROP POLICY IF EXISTS users_select_own ON public.users;
+    DROP POLICY IF EXISTS users_insert_own ON public.users;
+    DROP POLICY IF EXISTS users_update_own ON public.users;
+    DROP POLICY IF EXISTS oauth_identities_select_own ON public.oauth_identities;
+    DROP POLICY IF EXISTS oauth_identities_insert_own ON public.oauth_identities;
+    DROP POLICY IF EXISTS oauth_identities_update_own ON public.oauth_identities;
+    DROP POLICY IF EXISTS strategies_select_own ON public.strategies;
+    DROP POLICY IF EXISTS strategies_insert_own ON public.strategies;
+    DROP POLICY IF EXISTS strategies_update_own ON public.strategies;
+    DROP POLICY IF EXISTS runs_select_own ON public.runs;
+    DROP POLICY IF EXISTS runs_insert_own ON public.runs;
+    DROP POLICY IF EXISTS runs_update_own ON public.runs;
+    DROP POLICY IF EXISTS run_steps_select_own ON public.run_steps;
+    DROP POLICY IF EXISTS run_steps_insert_own ON public.run_steps;
+    DROP POLICY IF EXISTS run_steps_update_own ON public.run_steps;
+    DROP POLICY IF EXISTS run_artifacts_select_own ON public.run_artifacts;
+    DROP POLICY IF EXISTS run_artifacts_insert_own ON public.run_artifacts;
+    DROP POLICY IF EXISTS run_artifacts_update_own ON public.run_artifacts;
+    DROP POLICY IF EXISTS trades_select_own ON public.trades;
+    DROP POLICY IF EXISTS trades_insert_own ON public.trades;
+    DROP POLICY IF EXISTS trades_update_own ON public.trades;
+
     ALTER TABLE public.alembic_version ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.oauth_identities ENABLE ROW LEVEL SECURITY;

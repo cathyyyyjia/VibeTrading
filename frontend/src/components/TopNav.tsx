@@ -4,21 +4,31 @@
 // Features: Theme toggle (Sun/Moon) + Language toggle (EN/中)
 // ============================================================
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bell, Sun, Moon, Languages } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
 import type { NavTab } from '@/types';
+import { getMyProfile, updateMyProfile, type UserProfile } from '@/lib/api';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 
 export default function TopNav() {
   const [activeTab, setActiveTab] = useState<NavTab>('backtest');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [displayName, setDisplayName] = useState('');
   const { theme, toggleTheme } = useTheme();
   const { locale, toggleLocale, t } = useI18n();
   const { user, signOut } = useAuth();
@@ -28,6 +38,51 @@ export default function TopNav() {
     { id: 'paper', label: t('nav.paper'), disabled: false },
     { id: 'live', label: t('nav.live'), disabled: true },
   ];
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) return () => { cancelled = true; };
+
+    getMyProfile()
+      .then((next) => {
+        if (cancelled) return;
+        setProfile(next);
+        setDisplayName(next.displayName || '');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProfile(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const shownName = useMemo(() => {
+    const candidate = profile?.displayName?.trim();
+    if (candidate) return candidate;
+    return user?.email?.split('@')[0] || 'User';
+  }, [profile?.displayName, user?.email]);
+
+  const shownProvider = useMemo(() => {
+    return user?.app_metadata?.provider || 'Email';
+  }, [user?.app_metadata?.provider]);
+
+  const onSaveProfile = async () => {
+    try {
+      setSavingProfile(true);
+      const updated = await updateMyProfile({ displayName: displayName.trim() || null });
+      setProfile(updated);
+      setDisplayName(updated.displayName || '');
+      setProfileOpen(false);
+      toast.success('Profile updated');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   return (
     <header className="h-14 border-b border-border bg-background flex items-center justify-between px-5 shrink-0">
@@ -110,16 +165,19 @@ export default function TopNav() {
         {/* User */}
         <div className="flex items-center gap-2.5">
           <div className="text-right">
-            <div className="text-sm font-medium text-foreground leading-tight">{user?.email || 'User'}</div>
-            <div className="text-[11px] text-muted-foreground leading-tight">{user?.app_metadata?.provider || 'Email'}</div>
+            <div className="text-sm font-medium text-foreground leading-tight">{shownName}</div>
+            <div className="text-[11px] text-muted-foreground leading-tight">{shownProvider}</div>
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="w-8 h-8 rounded-full bg-foreground text-background flex items-center justify-center text-xs font-semibold hover:opacity-90 transition-opacity">
-                {user?.email?.[0].toUpperCase() || 'U'}
+                {shownName[0]?.toUpperCase() || 'U'}
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+                Profile
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={signOut}>
                 Log out
               </DropdownMenuItem>
@@ -127,6 +185,38 @@ export default function TopNav() {
           </DropdownMenu>
         </div>
       </div>
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Profile</DialogTitle>
+            <DialogDescription>Manage your public display information.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="profile-email">Email</Label>
+              <Input id="profile-email" value={profile?.email || user?.email || ''} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-display-name">Display name</Label>
+              <Input
+                id="profile-display-name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                maxLength={120}
+                placeholder="Enter display name"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProfileOpen(false)} disabled={savingProfile}>
+              Cancel
+            </Button>
+            <Button onClick={onSaveProfile} disabled={savingProfile}>
+              {savingProfile ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }

@@ -9,6 +9,7 @@ from fastapi import Query
 from pydantic import BaseModel
 from fastapi.responses import ORJSONResponse
 from fastapi.responses import PlainTextResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,11 +29,26 @@ from app.schemas.contracts import (
   WorkspaceStep,
 )
 from app.services.run_service import create_run, execute_run
+from app.services.storage_service import create_signed_url, download_bytes, download_json, parse_storage_uri
 from app.services.task_queue import enqueue_run_job_async
 from app.services.user_service import ensure_user_from_claims
 
 
 router = APIRouter()
+
+
+async def _load_artifact_json(art: RunArtifact) -> dict[str, Any] | None:
+  if isinstance(art.content, dict):
+    return art.content
+  if parse_storage_uri(art.uri) is None:
+    return None
+  return await download_json(art.uri)
+
+
+async def _load_artifact_bytes(art: RunArtifact) -> bytes | None:
+  if parse_storage_uri(art.uri) is None:
+    return None
+  return await download_bytes(art.uri)
 
 
 @router.post("", response_model=CreateRunResponse)
@@ -56,7 +72,7 @@ async def post_run(
 
   return CreateRunResponse(
     run_id=str(run.id),
-    message=f"Backtest run created. Poll /api/runs/{run.id}/status for progress.",
+    message=f"Backtest run created. Track progress via Realtime updates or GET /api/runs/{run.id}/status.",
   )
 
 
@@ -118,10 +134,15 @@ async def get_report(
   art = (
     await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == "report.json"))
   ).scalar_one_or_none()
-  if art is None or art.content is None:
+  if art is None:
     raise AppError("DATA_UNAVAILABLE", "report not ready", {"run_id": str(run_id)}, http_status=404)
+
+  report_content = await _load_artifact_json(art)
+  if report_content is None:
+    raise AppError("DATA_UNAVAILABLE", "report not ready", {"run_id": str(run_id)}, http_status=404)
+
   if format == "csv":
-    trades = art.content.get("trades") if isinstance(art.content, dict) else None
+    trades = report_content.get("trades") if isinstance(report_content, dict) else None
     if not isinstance(trades, list):
       return PlainTextResponse("", media_type="text/csv")
     rows = ["decision_time,fill_time,symbol,side,qty,fill_price"]
@@ -129,7 +150,7 @@ async def get_report(
       if isinstance(t, dict):
         rows.append(f"{t.get('decision_time','')},{t.get('fill_time','')},{t.get('symbol','')},{t.get('side','')},{t.get('qty','')},{t.get('fill_price','')}")
     return PlainTextResponse("\n".join(rows), media_type="text/csv")
-  return BacktestReportResponse.model_validate(art.content)
+  return BacktestReportResponse.model_validate(report_content)
 
 
 @router.get("/history", response_model=RunHistoryResponse)
@@ -161,23 +182,28 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
 
   kpis_rows = (
     await db.execute(
-      select(RunArtifact.run_id, RunArtifact.name, RunArtifact.content).where(
+      select(RunArtifact.run_id, RunArtifact.name, RunArtifact.content, RunArtifact.uri).where(
         RunArtifact.run_id.in_(run_ids),
         RunArtifact.name.in_(["kpis.json", "report.json"]),
       )
     )
   ).all()
   kpis_by_run_id: dict[uuid.UUID, BacktestKpis | None] = {}
-  for run_id_value, name, content in kpis_rows:
+  for run_id_value, name, content, uri in kpis_rows:
     if run_id_value in kpis_by_run_id and kpis_by_run_id[run_id_value] is not None:
       continue
-    if not isinstance(content, dict):
+
+    resolved_content: dict[str, Any] | None = content if isinstance(content, dict) else None
+    if resolved_content is None and isinstance(uri, str) and parse_storage_uri(uri) is not None:
+      resolved_content = await download_json(uri)
+    if not isinstance(resolved_content, dict):
       continue
+
     try:
       if name == "kpis.json":
-        raw = content.get("kpis")
+        raw = resolved_content.get("kpis")
       else:
-        raw = content.get("kpis")
+        raw = resolved_content.get("kpis")
       if isinstance(raw, dict):
         kpis_by_run_id[run_id_value] = BacktestKpis.model_validate(raw)
     except Exception:
@@ -211,15 +237,37 @@ async def get_artifact(
   name: str,
   db: AsyncSession = Depends(get_db),
   claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
+  download: bool = Query(default=False),
 ) -> Response:
   await _get_user_owned_run(db, run_id, claims)
   art = (await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == name))).scalar_one_or_none()
   if art is None:
     return error_response("DATA_UNAVAILABLE", "artifact not found", {"run_id": str(run_id), "name": name}, status=404)
+
+  if download and parse_storage_uri(art.uri) is not None:
+    signed = await create_signed_url(art.uri, download_name=art.name)
+    if not signed:
+      return error_response("DATA_UNAVAILABLE", "artifact signed url unavailable", {"run_id": str(run_id), "name": name}, status=404)
+    return RedirectResponse(signed, status_code=307)
+
   if art.type == "csv" and isinstance(art.content, dict) and isinstance(art.content.get("csv"), str):
     return PlainTextResponse(art.content["csv"], media_type="text/csv")
   if art.type == "markdown" and isinstance(art.content, dict) and isinstance(art.content.get("markdown"), str):
     return PlainTextResponse(art.content["markdown"], media_type="text/markdown")
+
+  if parse_storage_uri(art.uri) is not None and art.content is None:
+    if art.type in ("csv", "markdown"):
+      payload = await _load_artifact_bytes(art)
+      if payload is None:
+        return error_response("DATA_UNAVAILABLE", "artifact not available", {"run_id": str(run_id), "name": name}, status=404)
+      media_type = "text/csv" if art.type == "csv" else "text/markdown"
+      return PlainTextResponse(payload.decode("utf-8"), media_type=media_type)
+
+    json_payload = await _load_artifact_json(art)
+    if json_payload is None:
+      return ORJSONResponse({"name": art.name, "type": art.type, "uri": art.uri, "content": None})
+    return ORJSONResponse({"name": art.name, "type": art.type, "uri": art.uri, "content": json_payload})
+
   return ORJSONResponse({"name": art.name, "type": art.type, "uri": art.uri, "content": art.content})
 
 

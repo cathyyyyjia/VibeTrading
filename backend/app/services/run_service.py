@@ -17,6 +17,7 @@ from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
 from app.db.models import User
 from app.services.backtest_engine import run_backtest_from_spec
+from app.services.storage_service import upload_artifact_content, storage_enabled
 from app.services.spec_builder import compute_strategy_version, nl_to_strategy_spec
 
 logger = logging.getLogger(__name__)
@@ -70,16 +71,24 @@ async def _set_step_state(db: AsyncSession, run_id: uuid.UUID, step_id: StepId, 
 
 
 async def _upsert_artifact(db: AsyncSession, run_id: uuid.UUID, name: str, type_: str, uri: str, content: dict[str, Any] | None = None) -> None:
+  persisted_uri = uri
+  persisted_content: dict[str, Any] | None = content
+  if storage_enabled() and content is not None:
+    storage_uri = await upload_artifact_content(run_id=run_id, name=name, type_=type_, content=content)
+    if storage_uri is not None:
+      persisted_uri = storage_uri
+      persisted_content = None
+
   row = (
     await db.execute(select(RunArtifact).where(RunArtifact.run_id == run_id, RunArtifact.name == name))
   ).scalar_one_or_none()
   if row is None:
-    row = RunArtifact(run_id=run_id, name=name, type=type_, uri=uri, content=content)
+    row = RunArtifact(run_id=run_id, name=name, type=type_, uri=persisted_uri, content=persisted_content)
     db.add(row)
   else:
     row.type = type_
-    row.uri = uri
-    row.content = content
+    row.uri = persisted_uri
+    row.content = persisted_content
   try:
     await db.commit()
   except Exception:

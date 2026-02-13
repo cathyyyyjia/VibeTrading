@@ -26,7 +26,7 @@ async def health_deps() -> dict[str, object]:
   except Exception as e:
     db_status = f"error: {e}"
 
-  if settings.redis_url:
+  if settings.task_queue_enabled and settings.redis_url:
     try:
       client = redis.from_url(settings.redis_url, decode_responses=True)
       await client.ping()

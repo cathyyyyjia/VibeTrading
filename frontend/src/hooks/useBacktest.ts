@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import * as api from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { RunStatusResponse, RunReportResponse, StepInfo } from "@/lib/api";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export type AppStatus = "idle" | "analyzing" | "running" | "completed" | "failed";
 
@@ -31,9 +32,10 @@ export interface UseBacktestReturn {
   retry: () => void;
 }
 
-const POLL_INTERVAL_FAST = 1500;
-const POLL_INTERVAL_BACKTEST = 3000;
-const POLL_INTERVAL_MAX = 8000;
+const POLL_INTERVAL_INITIAL = 1500;
+const POLL_INTERVAL_FALLBACK = 12000;
+const POLL_INTERVAL_MAX = 20000;
+const RUN_REALTIME_ENABLED = ((import.meta as any).env?.VITE_RUN_REALTIME_ENABLED ?? "true") !== "false";
 
 function buildInitialWorkspaceSteps(): StepInfo[] {
   return [
@@ -64,6 +66,7 @@ export function useBacktest(): UseBacktestReturn {
   const [statusMessage, setStatusMessage] = useState("");
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeRef = useRef<RealtimeChannel | null>(null);
   const currentRunIdRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const errorStreakRef = useRef(0);
@@ -71,7 +74,18 @@ export function useBacktest(): UseBacktestReturn {
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearTimeout(pollingRef.current);
+      if (realtimeRef.current) {
+        void supabase.removeChannel(realtimeRef.current);
+        realtimeRef.current = null;
+      }
     };
+  }, []);
+
+  const stopRealtime = useCallback(() => {
+    if (realtimeRef.current) {
+      void supabase.removeChannel(realtimeRef.current);
+      realtimeRef.current = null;
+    }
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -84,10 +98,10 @@ export function useBacktest(): UseBacktestReturn {
   }, []);
 
   const pollStatus = useCallback(
-    async (rid: string) => {
+    async (rid: string, source: "start" | "realtime" | "poll" = "poll") => {
       if (inFlightRef.current) return;
       inFlightRef.current = true;
-      let nextDelay = POLL_INTERVAL_FAST;
+      let nextDelay = source === "start" ? POLL_INTERVAL_INITIAL : POLL_INTERVAL_FALLBACK;
       let shouldContinue = true;
       try {
         const statusData = await api.getRunStatus(rid);
@@ -106,7 +120,6 @@ export function useBacktest(): UseBacktestReturn {
               displayProgress = parsedPct;
             }
           }
-          nextDelay = POLL_INTERVAL_BACKTEST;
         }
         setProgress(displayProgress);
 
@@ -139,6 +152,7 @@ export function useBacktest(): UseBacktestReturn {
           setArtifacts(statusData.artifacts);
           setStatusMessage("Backtest completed successfully");
           stopPolling();
+          stopRealtime();
           shouldContinue = false;
 
           try {
@@ -152,6 +166,7 @@ export function useBacktest(): UseBacktestReturn {
         } else if (statusData.state === "failed") {
           setStatus("failed");
           stopPolling();
+          stopRealtime();
           shouldContinue = false;
           const failedStep = statusData.steps.find((s) => s.status === "error");
           const errorMsg = failedStep
@@ -162,7 +177,7 @@ export function useBacktest(): UseBacktestReturn {
         }
       } catch (e) {
         errorStreakRef.current += 1;
-        const backoff = Math.min(POLL_INTERVAL_MAX, POLL_INTERVAL_FAST * (2 ** Math.min(errorStreakRef.current, 3)));
+        const backoff = Math.min(POLL_INTERVAL_MAX, POLL_INTERVAL_INITIAL * (2 ** Math.min(errorStreakRef.current, 4)));
         nextDelay = backoff;
         console.error("Polling error:", e);
       } finally {
@@ -172,20 +187,60 @@ export function useBacktest(): UseBacktestReturn {
             clearTimeout(pollingRef.current);
           }
           pollingRef.current = setTimeout(() => {
-            void pollStatus(rid);
+            void pollStatus(rid, "poll");
           }, nextDelay);
         }
       }
     },
-    [stopPolling]
+    [stopPolling, stopRealtime]
   );
 
-  const startPolling = useCallback(
+  const subscribeRealtime = useCallback(
+    (rid: string) => {
+      stopRealtime();
+      if (!RUN_REALTIME_ENABLED) return;
+
+      const channel = supabase
+        .channel(`run-status:${rid}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "runs", filter: `id=eq.${rid}` },
+          () => {
+            void pollStatus(rid, "realtime");
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "run_steps", filter: `run_id=eq.${rid}` },
+          () => {
+            void pollStatus(rid, "realtime");
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "run_artifacts", filter: `run_id=eq.${rid}` },
+          () => {
+            void pollStatus(rid, "realtime");
+          }
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED" && currentRunIdRef.current === rid) {
+            void pollStatus(rid, "realtime");
+          }
+        });
+
+      realtimeRef.current = channel;
+    },
+    [pollStatus, stopRealtime]
+  );
+
+  const startTracking = useCallback(
     (rid: string) => {
       stopPolling();
-      void pollStatus(rid);
+      subscribeRealtime(rid);
+      void pollStatus(rid, "start");
     },
-    [pollStatus, stopPolling]
+    [pollStatus, stopPolling, subscribeRealtime]
   );
 
   const runBacktest = useCallback(async () => {
@@ -221,17 +276,18 @@ export function useBacktest(): UseBacktestReturn {
       setStrategyId(null);
       setStatusMessage("Run created. Initializing parser...");
       currentRunIdRef.current = newRunId;
-      startPolling(newRunId);
+      startTracking(newRunId);
     } catch (e) {
       console.error("Failed to start backtest:", e);
       setStatus("failed");
       setError("Failed to start backtest. Please try again.");
       setStatusMessage("Failed to initialize");
     }
-  }, [filters, prompt, startPolling]);
+  }, [filters, prompt, startTracking]);
 
   const revisePrompt = useCallback(() => {
     stopPolling();
+    stopRealtime();
     setStatus("idle");
     setRunId(null);
     setStrategyId(null);
@@ -242,7 +298,7 @@ export function useBacktest(): UseBacktestReturn {
     setReport(null);
     setError(null);
     setStatusMessage("");
-  }, [stopPolling]);
+  }, [stopPolling, stopRealtime]);
 
   const deploy = useCallback(
     async (mode: "paper" | "live"): Promise<api.DeployResponse> => {
