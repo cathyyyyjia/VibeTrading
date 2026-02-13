@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import time
+import logging
+import json
 from typing import Any
 
 import httpx
 import jwt
 from fastapi import Request
-from jwt import InvalidTokenError
+from jwt import InvalidTokenError, PyJWK
 
 from app.core.config import settings
 from app.core.errors import AppError, error_response
@@ -14,6 +16,8 @@ from app.core.errors import AppError, error_response
 _TOKEN_CACHE_TTL_SECONDS = 60.0
 _token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _jwks_cache: tuple[float, dict[str, Any]] = (0.0, {})
+_SUPPORTED_JWT_ALGS = {"RS256", "ES256", "EdDSA", "HS256"}
+logger = logging.getLogger(__name__)
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -155,6 +159,9 @@ async def verify_supabase_jwt(token: str) -> dict[str, Any]:
   alg = header.get("alg")
   if not isinstance(alg, str):
     raise AppError("UNAUTHORIZED", "Invalid token algorithm", http_status=401)
+  alg_normalized = alg.strip().upper()
+  if alg_normalized not in _SUPPORTED_JWT_ALGS:
+    raise AppError("UNAUTHORIZED", "Unsupported token algorithm", {"alg": alg}, http_status=401)
 
   audience = settings.supabase_jwt_audiences_list
   if not audience:
@@ -162,20 +169,7 @@ async def verify_supabase_jwt(token: str) -> dict[str, Any]:
   issuer = _expected_jwt_issuer()
 
   try:
-    if alg.upper() == "RS256":
-      kid = header.get("kid")
-      if not isinstance(kid, str) or not kid:
-        raise AppError("UNAUTHORIZED", "Token is missing key id", http_status=401)
-      jwk = await _get_jwk_for_kid(kid)
-      key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
-      claims = jwt.decode(
-        token,
-        key=key,
-        algorithms=["RS256"],
-        audience=audience,
-        issuer=issuer,
-      )
-    elif alg.upper() == "HS256":
+    if alg_normalized == "HS256":
       if not settings.supabase_secret_key:
         raise AppError("CONFIG_ERROR", "SUPABASE_SECRET_KEY is required for HS256 tokens")
       claims = jwt.decode(
@@ -186,7 +180,22 @@ async def verify_supabase_jwt(token: str) -> dict[str, Any]:
         issuer=issuer,
       )
     else:
-      raise AppError("UNAUTHORIZED", "Unsupported token algorithm", {"alg": alg}, http_status=401)
+      kid = header.get("kid")
+      if not isinstance(kid, str) or not kid:
+        raise AppError("UNAUTHORIZED", "Token is missing key id", http_status=401)
+      jwk = await _get_jwk_for_kid(kid)
+      if isinstance(jwk, str):
+        jwk = json.loads(jwk)
+      if not isinstance(jwk, dict):
+        raise AppError("UNAUTHORIZED", "Signing key format is invalid", {"kid": kid}, http_status=401)
+      key = PyJWK.from_dict(jwk).key
+      claims = jwt.decode(
+        token,
+        key=key,
+        algorithms=[alg_normalized],
+        audience=audience,
+        issuer=issuer,
+      )
   except AppError:
     raise
   except InvalidTokenError as e:
@@ -235,6 +244,15 @@ async def attach_auth_claims(request: Request, call_next):
   try:
     claims = await verify_access_token(token)
   except AppError as exc:
+    logger.warning(
+      "auth_rejected",
+      extra={
+        "path": path,
+        "code": exc.code,
+        "message": exc.message,
+        "details": exc.details or {},
+      },
+    )
     return error_response(exc.code, exc.message, exc.details, status=exc.http_status)
 
   request.state.auth_claims = ("supabase", claims)
