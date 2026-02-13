@@ -30,15 +30,19 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
     downloadCsv(`trades-${runId || "export"}.csv`, csv);
   };
 
-  const headers = [t("trade.timestamp"), t("trade.symbol"), t("trade.action"), t("trade.price"), t("trade.pnl"), "PnL %", "Reason"];
+  const headers = [
+    t("trade.timestamp"),
+    t("trade.symbol"),
+    t("trade.action"),
+    t("trade.price"),
+    t("trade.pnl"),
+    t("trade.pnlPct"),
+    t("trade.reason"),
+  ];
 
   if (loading) {
     return (
       <div className="border border-border rounded-lg bg-card overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <span className="text-sm font-semibold text-foreground">{t("trade.title")}</span>
-          <div className="h-3.5 w-20 bg-muted rounded animate-pulse" />
-        </div>
         <table className="w-full">
           <thead>
             <tr className="border-b border-border">
@@ -63,8 +67,7 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <span className="text-sm font-semibold text-foreground">{t("trade.title")}</span>
+      <div className="flex items-center justify-end px-4 py-3 border-b border-border">
         <button onClick={handleExportCSV} className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
           <Download className="w-3.5 h-3.5" />
           {t("trade.exportCsv")}
