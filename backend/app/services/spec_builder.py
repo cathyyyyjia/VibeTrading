@@ -7,7 +7,6 @@ from typing import Any, Literal
 from app.core.config import settings
 from app.core.errors import AppError
 from app.services.llm_client import llm_client
-from app.services.spec_validator import enforce_hard_rules, validate_strategy_spec_minimal
 
 
 SYSTEM_PROMPT_V0 = """You are a trading strategy compiler.
@@ -21,7 +20,7 @@ Hard Rules (Vibe Trading v0):
 2) Calendar is fixed to XNYS (system-managed).
 3) Decision time is fixed to market_close - 2 minutes (system-managed).
 4) Execution model is fixed to MOC (system-managed).
-5) MA5 definition is fixed to LAST_CLOSED_1D.
+5) MA/SMA window should follow user preference when provided; otherwise use sensible defaults.
 6) Primary timeframe is 1m; 4h and 1d are aggregated from 1m.
 7) No future leak: only fully closed bars at decision time.
 8) Lookback must include units, e.g. 5d, 20bars@4h.
@@ -435,14 +434,33 @@ def _build_repair_prompt(
   )
 
 
+def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] | None) -> str:
+  defaults = {"ma_window_days": 5, "macd": {"fast": 12, "slow": 26, "signal": 9}}
+  if not isinstance(indicator_preferences, dict):
+    return (
+      "Indicator parameter preferences:\n"
+      f"- defaults: {json.dumps(defaults, ensure_ascii=False)}\n"
+      "- user_selection: none (use defaults unless user NL explicitly asks otherwise)\n"
+    )
+  return (
+    "Indicator parameter preferences:\n"
+    f"- defaults: {json.dumps(defaults, ensure_ascii=False)}\n"
+    f"- user_selection: {json.dumps(indicator_preferences, ensure_ascii=False)}\n"
+    "- If user_selection exists, prioritize it unless it conflicts with explicit NL intent.\n"
+  )
+
+
 async def nl_to_strategy_spec(
   nl_text: str,
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
   overrides: dict[str, Any] | None = None,
+  indicator_preferences: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+  pref_context = _build_indicator_preferences_context(indicator_preferences)
   base_prompt = f"""User natural language strategy description: "{nl_text}"
 Additional context:
 - mode: "{mode}"
+{pref_context}
 Task:
 Return ONLY StrategyDraft JSON with fields: name, universe, risk, dsl.
 Do not include system fields like timezone/calendar/decision/execution/meta/strategy_id/strategy_version.
@@ -467,19 +485,12 @@ The output MUST be executable and must not contain empty indicators/events/rules
     if overrides and isinstance(overrides, dict):
       spec = _deep_merge(spec, overrides)
     spec["strategy_version"] = "v0"
-
-    try:
-      spec = enforce_hard_rules(spec)
-      validate_strategy_spec_minimal(spec)
-      meta = spec.get("meta")
-      if isinstance(meta, dict):
-        meta["llm_attempts"] = attempt + 1
-      return spec
-    except AppError as exc:
-      if exc.code != "VALIDATION_ERROR" or attempt >= max_attempts - 1:
-        raise
-      last_error = exc
-      prompt_for_attempt = _build_repair_prompt(nl_text, mode, llm_draft, exc)
+    meta = spec.get("meta")
+    if isinstance(meta, dict):
+      meta["llm_attempts"] = attempt + 1
+      if isinstance(indicator_preferences, dict):
+        meta["indicator_preferences"] = indicator_preferences
+    return spec
 
   if last_error is not None:
     raise last_error

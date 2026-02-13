@@ -119,6 +119,46 @@ def _safe_float(value: Any) -> float | None:
   return None
 
 
+def _read_int_pref(source: dict[str, Any], keys: list[str], default: int) -> int:
+  for key in keys:
+    raw = source.get(key)
+    if isinstance(raw, (int, float)):
+      return max(1, int(raw))
+    if isinstance(raw, str):
+      try:
+        return max(1, int(float(raw.strip())))
+      except Exception:
+        continue
+  return default
+
+
+def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, int]:
+  defaults = {
+    "ma_window_days": 5,
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+  }
+  meta = strategy_spec.get("meta")
+  if not isinstance(meta, dict):
+    return defaults
+  prefs = meta.get("indicator_preferences")
+  if not isinstance(prefs, dict):
+    return defaults
+
+  macd = prefs.get("macd")
+  if isinstance(macd, dict):
+    defaults["macd_fast"] = _read_int_pref(macd, ["fast"], defaults["macd_fast"])
+    defaults["macd_slow"] = _read_int_pref(macd, ["slow"], defaults["macd_slow"])
+    defaults["macd_signal"] = _read_int_pref(macd, ["signal"], defaults["macd_signal"])
+
+  defaults["ma_window_days"] = _read_int_pref(prefs, ["ma_window_days", "maWindowDays"], defaults["ma_window_days"])
+  defaults["macd_fast"] = _read_int_pref(prefs, ["macd_fast", "macdFast"], defaults["macd_fast"])
+  defaults["macd_slow"] = _read_int_pref(prefs, ["macd_slow", "macdSlow"], defaults["macd_slow"])
+  defaults["macd_signal"] = _read_int_pref(prefs, ["macd_signal", "macdSignal"], defaults["macd_signal"])
+  return defaults
+
+
 def _compare(op: str, left: float | None, right: float | None) -> bool:
   if left is None or right is None:
     return False
@@ -321,6 +361,7 @@ async def run_backtest_from_spec(
   action_layer = (dsl.get("action") or {})
   constants = (atomic.get("constants") or {})
   risk = strategy_spec.get("risk") or {}
+  indicator_defaults = _extract_indicator_defaults(strategy_spec)
   default_cooldown = ((risk.get("cooldown") or {}).get("value")) if isinstance(risk.get("cooldown"), dict) else None
 
   symbol_refs: dict[str, str] = {"signal": signal_symbol, "trade": trade_symbol}
@@ -374,9 +415,9 @@ async def run_backtest_from_spec(
 
       values: dict[str, float | None]
       if ind_type == "MACD" and tf == "4h":
-        fast = int(params.get("fast") or 12)
-        slow = int(params.get("slow") or 26)
-        signal_n = int(params.get("signal") or 9)
+        fast = _read_int_pref(params, ["fast"], indicator_defaults["macd_fast"])
+        slow = _read_int_pref(params, ["slow"], indicator_defaults["macd_slow"])
+        signal_n = _read_int_pref(params, ["signal"], indicator_defaults["macd_signal"])
         macd_line, signal_line = _macd(four_h_closes, fast, slow, signal_n)
         indicator_4h_series[ind_id] = {"macd": macd_line, "signal": signal_line}
         for i, idx4h in enumerate(idx4h_by_session):
@@ -387,7 +428,10 @@ async def run_backtest_from_spec(
             values["value"] = values["macd"]
           decision_indicator_values[i][ind_id] = values
       elif ind_type in ("SMA", "MA") and tf == "1d":
-        window = _parse_lookback_days(params.get("window") or constants.get("lookback"), default=5)
+        window = _parse_lookback_days(
+          params.get("window") or constants.get("lookback"),
+          default=indicator_defaults["ma_window_days"],
+        )
         series = _daily_series(symbol_ref)
         for i in range(len(session_rows)):
           val: float | None = None

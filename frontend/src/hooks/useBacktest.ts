@@ -24,7 +24,9 @@ export interface UseBacktestReturn {
   report: RunReportResponse | null;
   error: string | null;
   statusMessage: string;
+  indicatorPreferences: api.IndicatorPreferences;
   setPrompt: (v: string) => void;
+  setIndicatorPreferences: (next: api.IndicatorPreferences) => void;
   toggleFilter: (id: string) => void;
   runBacktest: () => void;
   revisePrompt: () => void;
@@ -37,6 +39,12 @@ const POLL_INTERVAL_FALLBACK = 12000;
 const POLL_INTERVAL_MAX = 20000;
 const POLL_INTERVAL_REALTIME_HEARTBEAT = 30000;
 const RUN_REALTIME_ENABLED = ((import.meta as any).env?.VITE_RUN_REALTIME_ENABLED ?? "true") !== "false";
+const DEFAULT_INDICATOR_PREFERENCES: api.IndicatorPreferences = {
+  maWindowDays: 5,
+  macdFast: 12,
+  macdSlow: 26,
+  macdSignal: 9,
+};
 
 function buildInitialWorkspaceSteps(): StepInfo[] {
   return [
@@ -65,6 +73,7 @@ export function useBacktest(): UseBacktestReturn {
   const [report, setReport] = useState<RunReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [indicatorPreferences, setIndicatorPreferences] = useState<api.IndicatorPreferences>(DEFAULT_INDICATOR_PREFERENCES);
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeRef = useRef<RealtimeChannel | null>(null);
@@ -285,7 +294,11 @@ export function useBacktest(): UseBacktestReturn {
         if (f.active) options[f.id] = true;
       });
 
-      const { runId: newRunId } = await api.createRun(prompt, { ...options, mode: "BACKTEST_ONLY" });
+      const { runId: newRunId } = await api.createRun(prompt, {
+        ...options,
+        mode: "BACKTEST_ONLY",
+        llmIndicatorPreferences: indicatorPreferences,
+      });
       setStatus("running");
       setRunId(newRunId);
       setStrategyId(null);
@@ -299,7 +312,7 @@ export function useBacktest(): UseBacktestReturn {
       setError(msg);
       setStatusMessage("Failed to initialize");
     }
-  }, [filters, prompt, startTracking]);
+  }, [filters, indicatorPreferences, prompt, startTracking]);
 
   const revisePrompt = useCallback(() => {
     stopPolling();
@@ -344,7 +357,9 @@ export function useBacktest(): UseBacktestReturn {
     report,
     error,
     statusMessage,
+    indicatorPreferences,
     setPrompt,
+    setIndicatorPreferences,
     toggleFilter,
     runBacktest,
     revisePrompt,

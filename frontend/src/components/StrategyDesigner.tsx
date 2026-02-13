@@ -8,16 +8,16 @@ import SimulationResult from './SimulationResult';
 import ErrorCard from './ErrorCard';
 import HistoryPanel from './HistoryPanel';
 import { useI18n } from '@/contexts/I18nContext';
-import type { AppStatus, ChipFilter } from '@/hooks/useBacktest';
-import type { RunReportResponse } from '@/lib/api';
+import type { AppStatus } from '@/hooks/useBacktest';
+import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
 
 interface StrategyDesignerProps {
   status: AppStatus;
   prompt: string;
   onPromptChange: (value: string) => void;
-  filters: ChipFilter[];
-  onToggleFilter: (id: string) => void;
   onRunBacktest: () => void;
+  indicatorPreferences: IndicatorPreferences;
+  onIndicatorPreferencesChange: (next: IndicatorPreferences) => void;
   report: RunReportResponse | null;
   runId: string | null;
   error: string | null;
@@ -29,9 +29,9 @@ export default function StrategyDesigner({
   status,
   prompt,
   onPromptChange,
-  filters,
-  onToggleFilter,
   onRunBacktest,
+  indicatorPreferences,
+  onIndicatorPreferencesChange,
   report,
   runId,
   error,
@@ -54,9 +54,9 @@ export default function StrategyDesigner({
       <StrategyInput
         prompt={prompt}
         onPromptChange={onPromptChange}
-        filters={filters}
-        onToggleFilter={onToggleFilter}
         onRunBacktest={onRunBacktest}
+        indicatorPreferences={indicatorPreferences}
+        onIndicatorPreferencesChange={onIndicatorPreferencesChange}
         status={status}
       />
 
@@ -66,7 +66,7 @@ export default function StrategyDesigner({
       )}
 
       {/* Simulation Results */}
-      <SimulationResult report={report} status={status} runId={runId} />
+      <SimulationResult report={report} status={status} runId={runId} indicatorPreferences={indicatorPreferences} />
 
       {/* History Panel */}
       <HistoryPanel onSelectPrompt={onLoadHistoryPrompt} />

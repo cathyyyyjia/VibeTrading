@@ -16,7 +16,6 @@ export default function Home() {
   const {
     status,
     prompt,
-    filters,
     runId,
     steps,
     progress,
@@ -24,8 +23,9 @@ export default function Home() {
     report,
     error: backtestError,
     statusMessage,
+    indicatorPreferences,
     setPrompt,
-    toggleFilter,
+    setIndicatorPreferences,
     runBacktest,
     revisePrompt,
     deploy,
@@ -48,9 +48,9 @@ export default function Home() {
               status={status}
               prompt={prompt}
               onPromptChange={setPrompt}
-              filters={filters}
-              onToggleFilter={toggleFilter}
               onRunBacktest={runBacktest}
+              indicatorPreferences={indicatorPreferences}
+              onIndicatorPreferencesChange={setIndicatorPreferences}
               report={report}
               runId={runId}
               error={backtestError}

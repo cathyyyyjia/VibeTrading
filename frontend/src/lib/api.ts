@@ -75,6 +75,21 @@ export interface CreateRunResponse {
   runId: string;
 }
 
+export interface IndicatorPreferences {
+  maWindowDays: number;
+  macdFast: number;
+  macdSlow: number;
+  macdSignal: number;
+}
+
+export interface CreateRunOptions {
+  mode?: V0Mode;
+  startDate?: string;
+  endDate?: string;
+  llmIndicatorPreferences?: IndicatorPreferences;
+  [key: string]: unknown;
+}
+
 export interface StepInfo {
   key: string;
   title: string;
@@ -221,10 +236,11 @@ export async function downloadRunArtifact(runId: string, name: string): Promise<
   return await res.blob();
 }
 
-export async function createRun(prompt: string, options?: Record<string, unknown>): Promise<CreateRunResponse> {
+export async function createRun(prompt: string, options?: CreateRunOptions): Promise<CreateRunResponse> {
   const mode = (options?.mode as V0Mode | undefined) ?? "BACKTEST_ONLY";
   const startDate = typeof options?.startDate === "string" ? options.startDate : "2025-01-01";
   const endDate = typeof options?.endDate === "string" ? options.endDate : "2025-12-31";
+  const llmIndicatorPreferences = options?.llmIndicatorPreferences;
   const res = await apiFetch(`/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -234,6 +250,7 @@ export async function createRun(prompt: string, options?: Record<string, unknown
       mode,
       start_date: startDate,
       end_date: endDate,
+      llm_indicator_preferences: llmIndicatorPreferences ?? null,
     }),
   }, { timeoutMs: 180000 });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to create run"));

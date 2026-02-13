@@ -98,7 +98,12 @@ async def _upsert_artifact(db: AsyncSession, run_id: uuid.UUID, name: str, type_
 
 
 async def create_run(db: AsyncSession, req: NaturalLanguageStrategyRequest, *, user_id: uuid.UUID) -> Run:
-  spec = await nl_to_strategy_spec(req.nl, req.mode, overrides=req.overrides)
+  spec = await nl_to_strategy_spec(
+    req.nl,
+    req.mode,
+    overrides=req.overrides,
+    indicator_preferences=req.llm_indicator_preferences,
+  )
   if not isinstance(spec, dict):
     raise AppError("VALIDATION_ERROR", "StrategySpec must be an object", {"type": str(type(spec))})
 

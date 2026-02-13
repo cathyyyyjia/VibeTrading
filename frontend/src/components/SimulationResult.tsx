@@ -10,12 +10,13 @@ import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import * as api from '@/lib/api';
-import type { RunReportResponse } from '@/lib/api';
+import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
 
 interface SimulationResultProps {
   report: RunReportResponse | null;
   status: AppStatus;
   runId: string | null;
+  indicatorPreferences: IndicatorPreferences;
 }
 
 interface StrategySummary {
@@ -27,6 +28,10 @@ interface StrategySummary {
   events: number;
   rules: number;
   actions: number;
+  maWindowDays: number | null;
+  macdFast: number | null;
+  macdSlow: number | null;
+  macdSignal: number | null;
 }
 
 function buildStrategySummary(content: any): StrategySummary | null {
@@ -51,10 +56,57 @@ function buildStrategySummary(content: any): StrategySummary | null {
   const signalSymbol = typeof universe.signal_symbol === 'string' ? universe.signal_symbol : '-';
   const tradeSymbol = typeof universe.trade_symbol === 'string' ? universe.trade_symbol : '-';
 
-  return { signalSymbol, tradeSymbol, primaryTf, derivedTfs, indicators, events, rules, actions };
+  let maWindowDays: number | null = null;
+  let macdFast: number | null = null;
+  let macdSlow: number | null = null;
+  let macdSignal: number | null = null;
+
+  if (Array.isArray(signal.indicators)) {
+    for (const ind of signal.indicators) {
+      if (!ind || typeof ind !== 'object') continue;
+      const type = String((ind as any).type || '').toUpperCase();
+      const params = ((ind as any).params && typeof (ind as any).params === 'object') ? (ind as any).params : {};
+      if (maWindowDays === null && (type === 'MA' || type === 'SMA')) {
+        const w = String(params.window || '').toLowerCase().replace('d', '');
+        const n = Number(w);
+        if (Number.isFinite(n) && n > 0) maWindowDays = Math.floor(n);
+      }
+      if (macdFast === null && type === 'MACD') {
+        const f = Number(params.fast);
+        const s = Number(params.slow);
+        const sig = Number(params.signal);
+        if (Number.isFinite(f)) macdFast = Math.floor(f);
+        if (Number.isFinite(s)) macdSlow = Math.floor(s);
+        if (Number.isFinite(sig)) macdSignal = Math.floor(sig);
+      }
+    }
+  }
+
+  const meta = spec.meta && typeof spec.meta === 'object' ? spec.meta : {};
+  const prefs = meta.indicator_preferences && typeof meta.indicator_preferences === 'object' ? meta.indicator_preferences : {};
+  const macdPrefs = prefs.macd && typeof prefs.macd === 'object' ? prefs.macd : {};
+
+  if (maWindowDays === null) {
+    const w = Number((prefs as any).maWindowDays ?? (prefs as any).ma_window_days);
+    if (Number.isFinite(w) && w > 0) maWindowDays = Math.floor(w);
+  }
+  if (macdFast === null) {
+    const f = Number((prefs as any).macdFast ?? (prefs as any).macd_fast ?? (macdPrefs as any).fast);
+    if (Number.isFinite(f) && f > 0) macdFast = Math.floor(f);
+  }
+  if (macdSlow === null) {
+    const s = Number((prefs as any).macdSlow ?? (prefs as any).macd_slow ?? (macdPrefs as any).slow);
+    if (Number.isFinite(s) && s > 0) macdSlow = Math.floor(s);
+  }
+  if (macdSignal === null) {
+    const sig = Number((prefs as any).macdSignal ?? (prefs as any).macd_signal ?? (macdPrefs as any).signal);
+    if (Number.isFinite(sig) && sig > 0) macdSignal = Math.floor(sig);
+  }
+
+  return { signalSymbol, tradeSymbol, primaryTf, derivedTfs, indicators, events, rules, actions, maWindowDays, macdFast, macdSlow, macdSignal };
 }
 
-export default function SimulationResult({ report, status, runId }: SimulationResultProps) {
+export default function SimulationResult({ report, status, runId, indicatorPreferences }: SimulationResultProps) {
   const { t } = useI18n();
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
@@ -117,6 +169,12 @@ export default function SimulationResult({ report, status, runId }: SimulationRe
             <div className="text-muted-foreground">Timeframes: <span className="text-foreground">{summary.primaryTf}{summary.derivedTfs.length ? ` + ${summary.derivedTfs.join(', ')}` : ''}</span></div>
             <div className="text-muted-foreground">Indicators / Events: <span className="text-foreground">{summary.indicators} / {summary.events}</span></div>
             <div className="text-muted-foreground">Rules / Actions: <span className="text-foreground">{summary.rules} / {summary.actions}</span></div>
+            <div className="text-muted-foreground">
+              {t('sim.ma')}: <span className="text-foreground">{`MA${summary.maWindowDays ?? indicatorPreferences.maWindowDays}`}</span>
+            </div>
+            <div className="text-muted-foreground">
+              {t('sim.macd')}: <span className="text-foreground">{`${summary.macdFast ?? indicatorPreferences.macdFast}/${summary.macdSlow ?? indicatorPreferences.macdSlow}/${summary.macdSignal ?? indicatorPreferences.macdSignal}`}</span>
+            </div>
           </div>
         </div>
       )}

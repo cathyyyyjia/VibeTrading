@@ -41,6 +41,7 @@ class NaturalLanguageStrategyRequest(BaseModel):
   start_date: date = Field(default=date(2025, 1, 1))
   end_date: date = Field(default=date(2025, 12, 31))
   overrides: dict[str, Any] | None = None
+  llm_indicator_preferences: dict[str, Any] | None = None
 
 
 class CreateRunResponse(BaseModel):
