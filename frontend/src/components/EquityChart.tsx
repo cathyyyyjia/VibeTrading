@@ -320,8 +320,12 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               }}
               onClick={(state: any) => {
                 const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
+                if (pinnedRow) {
+                  setPinnedRow(null);
+                  return;
+                }
                 if (!row) return;
-                setPinnedRow((prev) => (prev?.ts === row.ts ? null : row));
+                setPinnedRow(row);
               }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
@@ -372,6 +376,10 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 fill={palette.up}
                 shape={<BuyDot />}
                 onClick={(point: any) => {
+                  if (pinnedRow) {
+                    setPinnedRow(null);
+                    return;
+                  }
                   const row = point?.payload as ChartRow | undefined;
                   if (!row) return;
                   setSelectedTradeRow(row);
@@ -386,6 +394,10 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 fill={palette.down}
                 shape={<SellDot />}
                 onClick={(point: any) => {
+                  if (pinnedRow) {
+                    setPinnedRow(null);
+                    return;
+                  }
                   const row = point?.payload as ChartRow | undefined;
                   if (!row) return;
                   setSelectedTradeRow(row);
@@ -507,4 +519,3 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     </div>
   );
 }
-

@@ -579,6 +579,101 @@ def _normalize_indicator_ids(draft: dict[str, Any]) -> dict[str, Any]:
   return draft
 
 
+def _split_ref(raw: str) -> tuple[str, str | None, str | None]:
+  base_and_field, *at_tf = raw.split("@", 1)
+  base, *field = base_and_field.split(".", 1)
+  return base, (field[0] if field else None), (at_tf[0] if at_tf else None)
+
+
+def _join_ref(base: str, field: str | None, at_tf: str | None) -> str:
+  out = base
+  if field:
+    out = f"{out}.{field}"
+  if at_tf:
+    out = f"{out}@{at_tf}"
+  return out
+
+
+def _normalize_macd_cross_events(draft: dict[str, Any]) -> dict[str, Any]:
+  dsl = draft.get("dsl")
+  if not isinstance(dsl, dict):
+    return draft
+  signal = dsl.get("signal")
+  if not isinstance(signal, dict):
+    return draft
+  indicators = signal.get("indicators")
+  events = signal.get("events")
+  if not isinstance(indicators, list) or not isinstance(events, list):
+    return draft
+
+  ind_by_id: dict[str, dict[str, Any]] = {}
+  macd_canonical_by_sig: dict[tuple[str, str, int, int, int], str] = {}
+  for ind in indicators:
+    if not isinstance(ind, dict):
+      continue
+    ind_id = str(ind.get("id") or "").strip()
+    if not ind_id:
+      continue
+    ind_by_id[ind_id] = ind
+    if str(ind.get("type") or "").upper() != "MACD":
+      continue
+    params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+    sig = (
+      str(ind.get("tf") or "").lower(),
+      str(ind.get("symbol_ref") or "signal").lower(),
+      int(params.get("fast") or 12),
+      int(params.get("slow") or 26),
+      int(params.get("signal") or 9),
+    )
+    if sig not in macd_canonical_by_sig:
+      macd_canonical_by_sig[sig] = ind_id
+
+  for ev in events:
+    if not isinstance(ev, dict):
+      continue
+    ev_type = str(ev.get("type") or "").upper()
+    if ev_type not in ("CROSS", "CROSS_UP", "CROSS_DOWN"):
+      continue
+    a_raw = ev.get("a")
+    b_raw = ev.get("b")
+    if not isinstance(a_raw, str) or not isinstance(b_raw, str):
+      continue
+
+    a_base, a_field, a_tf = _split_ref(a_raw)
+    b_base, b_field, b_tf = _split_ref(b_raw)
+    a_ind = ind_by_id.get(a_base)
+    b_ind = ind_by_id.get(b_base)
+
+    def _canonical_id(ind: dict[str, Any], fallback: str) -> str:
+      params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+      sig = (
+        str(ind.get("tf") or "").lower(),
+        str(ind.get("symbol_ref") or "signal").lower(),
+        int(params.get("fast") or 12),
+        int(params.get("slow") or 26),
+        int(params.get("signal") or 9),
+      )
+      return macd_canonical_by_sig.get(sig, fallback)
+
+    if isinstance(a_ind, dict) and str(a_ind.get("type") or "").upper() == "MACD":
+      a_base = _canonical_id(a_ind, a_base)
+      if not a_field:
+        a_field = "macd"
+    if isinstance(b_ind, dict) and str(b_ind.get("type") or "").upper() == "MACD":
+      b_base = _canonical_id(b_ind, b_base)
+      if not b_field:
+        b_field = "signal"
+
+    if a_base == b_base and a_field == b_field:
+      # ensure cross compares two distinct MACD components
+      b_field = "signal" if a_field != "signal" else "macd"
+
+    ev["a"] = _join_ref(a_base, a_field, a_tf)
+    ev["b"] = _join_ref(b_base, b_field, b_tf)
+
+  return draft
+
+
 async def nl_to_strategy_spec(
   nl_text: str,
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
@@ -612,6 +707,7 @@ The output MUST be executable and must not contain empty indicators/events/rules
 
     adjusted_draft = _apply_indicator_preferences_to_draft(dict(llm_draft), indicator_preferences)
     adjusted_draft = _normalize_indicator_ids(adjusted_draft)
+    adjusted_draft = _normalize_macd_cross_events(adjusted_draft)
     spec = _assemble_final_strategy_spec(draft=adjusted_draft, nl_text=nl_text, mode=mode)
     if overrides and isinstance(overrides, dict):
       spec = _deep_merge(spec, overrides)

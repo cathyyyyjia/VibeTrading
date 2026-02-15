@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from typing import Any
 
@@ -76,6 +77,29 @@ def _mock_strategy_draft() -> dict[str, Any]:
       },
     },
   }
+
+
+def _mock_strategy_draft_with_duplicate_macd_refs() -> dict[str, Any]:
+  draft = copy.deepcopy(_mock_strategy_draft())
+  indicators = draft["dsl"]["signal"]["indicators"]
+  indicators.append(
+    {"id": "macd_4h_dup", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "params": {"fast": 12, "slow": 26, "signal": 9}}
+  )
+  draft["dsl"]["signal"]["events"] = [
+    {
+      "id": "macd_bear_cross",
+      "type": "CROSS_DOWN",
+      # intentionally missing field suffix and using duplicate MACD ids
+      "a": "macd_4h",
+      "b": "macd_4h_dup",
+      "left": None,
+      "right": None,
+      "direction": "DOWN",
+      "op": None,
+      "value": None,
+    }
+  ]
+  return draft
 
 
 def _find_sell_fraction(spec: dict[str, Any]) -> float | None:
@@ -161,6 +185,20 @@ async def test_nl_to_spec_applies_overrides_after_assembly(monkeypatch: pytest.M
   assert spec["execution"]["model"] == "MOC"
   assert float(spec["execution"]["slippage_bps"]) == 5.0
   assert spec["universe"]["trade_symbol"] == "SQQQ"
+
+
+@pytest.mark.asyncio
+async def test_nl_to_spec_normalizes_macd_cross_event_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _mock_strategy_draft_with_duplicate_macd_refs()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
+  events = (((spec.get("dsl") or {}).get("signal") or {}).get("events") or [])
+  assert isinstance(events, list) and len(events) > 0
+  cross = events[0]
+  assert isinstance(cross.get("a"), str) and str(cross["a"]).endswith(".macd")
+  assert isinstance(cross.get("b"), str) and str(cross["b"]).endswith(".signal")
 
 
 @pytest.mark.asyncio
