@@ -1,7 +1,6 @@
 import { Download } from "lucide-react";
 import { downloadCsv, tradesToCsv } from "@/lib/csv";
 import { useI18n } from "@/contexts/I18nContext";
-import { formatDateByLocale, isIsoDate } from "@/lib/date";
 import type { TradeRecord } from "@/lib/api";
 
 interface TradeTableProps {
@@ -13,7 +12,7 @@ interface TradeTableProps {
 function SkeletonRow() {
   return (
     <tr className="border-b border-border/40">
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+      {[0, 1, 2, 3, 4, 5].map((i) => (
         <td key={i} className="py-3 px-4">
           <div className="h-3.5 bg-muted rounded animate-pulse" style={{ width: `${50 + i * 8}%` }} />
         </td>
@@ -25,13 +24,6 @@ function SkeletonRow() {
 export default function TradeTable({ trades, loading, runId }: TradeTableProps) {
   const { t, locale } = useI18n();
 
-  const formatTradeDate = (value?: string): string => {
-    if (!value) return "-";
-    const justDate = value.slice(0, 10);
-    if (!isIsoDate(justDate)) return value;
-    return formatDateByLocale(justDate, locale);
-  };
-
   const handleExportCSV = () => {
     if (!trades) return;
     const csv = tradesToCsv(trades as never);
@@ -39,13 +31,12 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
   };
 
   const headers = [
-    t("trade.timestamp"),
+    locale === "zh" ? "时间" : "TIME",
     t("trade.symbol"),
     t("trade.action"),
     t("trade.price"),
     t("trade.pnl"),
     t("trade.pnlPct"),
-    t("trade.reason"),
   ];
 
   if (loading) {
@@ -96,7 +87,7 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
           <tbody>
             {hasTrades ? trades!.map((trade, index) => (
               <tr key={index} className={`hover:bg-muted/20 transition-colors ${index < trades.length - 1 ? "border-b border-border/40" : ""}`}>
-                <td className="py-2.5 px-4 text-sm text-muted-foreground">{formatTradeDate(trade.entryTime || trade.timestamp)}</td>
+                <td className="py-2.5 px-4 text-sm text-muted-foreground">{trade.entryTime || trade.timestamp || "-"}</td>
                 <td className="py-2.5 px-4 text-sm font-medium text-foreground font-mono">{trade.symbol}</td>
                 <td className="py-2.5 px-4">
                   <span
@@ -129,13 +120,9 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
                     <span className="text-muted-foreground">-</span>
                   )}
                 </td>
-                <td className="py-2.5 px-4 text-xs text-muted-foreground max-w-[200px] truncate" title={trade.reason || ""}>
-                  {trade.reason || "-"}
-                </td>
               </tr>
             )) : (
               <tr className="border-b border-border/40">
-                <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
                 <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
                 <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>
                 <td className="py-2.5 px-4 text-sm text-muted-foreground">-</td>

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Area,
   AreaChart,
   Brush,
@@ -6,12 +6,13 @@ import {
   ComposedChart,
   Line,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   XAxis,
   YAxis,
 } from "recharts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/contexts/I18nContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useChartColor } from "@/contexts/ChartColorContext";
@@ -117,6 +118,13 @@ function buildPositionBands(rows: ChartRow[]): PositionBand[] {
   return bands;
 }
 
+function getSmartPresetByLength(length: number): WindowPreset {
+  if (length <= 90) return "3m";
+  if (length <= 180) return "6m";
+  if (length <= 300) return "1y";
+  return "all";
+}
+
 function SkeletonChart() {
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
@@ -148,6 +156,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const [hoverRow, setHoverRow] = useState<ChartRow | null>(null);
   const [pinnedRow, setPinnedRow] = useState<ChartRow | null>(null);
   const [selectedTradeRow, setSelectedTradeRow] = useState<ChartRow | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null);
+  const userChangedPresetRef = useRef(false);
 
   const rows = useMemo<ChartRow[]>(() => {
     if (!data || data.length === 0) return [];
@@ -224,6 +235,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
   const positionBands = useMemo(() => buildPositionBands(rows), [rows]);
   const activeInfo = pinnedRow ?? hoverRow;
+  const activePos = pinnedPos ?? hoverPos;
 
   const presetPoints: Record<WindowPreset, number> = {
     "3m": 63,
@@ -236,6 +248,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     if (rows.length === 0) {
       setBrushRange({ start: 0, end: 0 });
       return;
+    }
+    if (!userChangedPresetRef.current) {
+      setWindowPreset(getSmartPresetByLength(rows.length));
     }
     const last = rows.length - 1;
     const points = presetPoints[windowPreset];
@@ -276,7 +291,10 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
             <button
               key={preset.key}
               type="button"
-              onClick={() => setWindowPreset(preset.key)}
+              onClick={() => {
+                userChangedPresetRef.current = true;
+                setWindowPreset(preset.key);
+              }}
               className={`h-7 px-2.5 text-[11px] rounded-md border transition-colors ${
                 active
                   ? "bg-foreground text-background border-foreground"
@@ -290,21 +308,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       </div>
 
       <div>
-        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          {locale === "zh" ? "策略累计收益" : "Strategy Return"}
-        </div>
-        {activeInfo && (
-          <div className="mb-2 inline-flex flex-col rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-foreground">
-            <div className="font-medium">
-              {formatDateByLocale(activeInfo.day, locale)}
-              {pinnedRow ? (locale === "zh" ? "（已固定）" : " (Pinned)") : ""}
-            </div>
-            <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(activeInfo.equity)}</div>
-            <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(activeInfo.returnPct)}</div>
-            <div>{locale === "zh" ? "回撤" : "Drawdown"}: {formatPct(activeInfo.drawdownPct)}</div>
-          </div>
-        )}
-        <div className="h-[260px]">
+        <div className="relative h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={rows}
@@ -314,18 +318,34 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 if (pinnedRow) return;
                 const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
                 setHoverRow(row ?? null);
+                if (row && typeof state?.chartX === "number" && typeof state?.chartY === "number") {
+                  setHoverPos({ x: state.chartX, y: state.chartY });
+                } else {
+                  setHoverPos(null);
+                }
               }}
               onMouseLeave={() => {
-                if (!pinnedRow) setHoverRow(null);
+                if (!pinnedRow) {
+                  setHoverRow(null);
+                  setHoverPos(null);
+                }
               }}
               onClick={(state: any) => {
                 const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
                 if (pinnedRow) {
                   setPinnedRow(null);
+                  setPinnedPos(null);
+                  setSelectedTradeRow(null);
                   return;
                 }
                 if (!row) return;
                 setPinnedRow(row);
+                setSelectedTradeRow(null);
+                if (typeof state?.chartX === "number" && typeof state?.chartY === "number") {
+                  setPinnedPos({ x: state.chartX, y: state.chartY });
+                } else {
+                  setPinnedPos(null);
+                }
               }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
@@ -357,11 +377,27 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 axisLine={false}
                 width={56}
                 tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+                label={{
+                  value: locale === "zh" ? "绱鏀剁泭 (%)" : "Return (%)",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 4,
+                  fill: axisColor,
+                  fontSize: 10,
+                }}
               />
+              {activeInfo ? (
+                <ReferenceLine
+                  x={activeInfo.ts}
+                  stroke={isDark ? "#71717a" : "#94a3b8"}
+                  strokeDasharray="3 3"
+                  strokeOpacity={0.75}
+                />
+              ) : null}
 
               <Line
                 yAxisId="return"
-                type="monotone"
+                type="linear"
                 dataKey="returnPct"
                 stroke={COLOR_PRESET.curve}
                 strokeWidth={1.9}
@@ -378,12 +414,19 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 onClick={(point: any) => {
                   if (pinnedRow) {
                     setPinnedRow(null);
+                    setPinnedPos(null);
+                    setSelectedTradeRow(null);
                     return;
                   }
                   const row = point?.payload as ChartRow | undefined;
                   if (!row) return;
                   setSelectedTradeRow(row);
                   setPinnedRow(row);
+                  if (typeof point?.cx === "number" && typeof point?.cy === "number") {
+                    setPinnedPos({ x: point.cx, y: point.cy });
+                  } else {
+                    setPinnedPos(null);
+                  }
                 }}
               />
 
@@ -396,23 +439,68 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 onClick={(point: any) => {
                   if (pinnedRow) {
                     setPinnedRow(null);
+                    setPinnedPos(null);
+                    setSelectedTradeRow(null);
                     return;
                   }
                   const row = point?.payload as ChartRow | undefined;
                   if (!row) return;
                   setSelectedTradeRow(row);
                   setPinnedRow(row);
+                  if (typeof point?.cx === "number" && typeof point?.cy === "number") {
+                    setPinnedPos({ x: point.cx, y: point.cy });
+                  } else {
+                    setPinnedPos(null);
+                  }
                 }}
               />
             </ComposedChart>
           </ResponsiveContainer>
+          {activeInfo && activePos && (
+            <div
+              className="pointer-events-none absolute z-20 flex flex-col gap-2"
+              style={{
+                left: `${activePos.x + 14}px`,
+                top: `${Math.max(8, activePos.y - 18)}px`,
+              }}
+            >
+              <div className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm backdrop-blur-[1px]">
+                <div className="font-medium">
+                  {formatDateByLocale(activeInfo.day, locale)}
+                  {pinnedRow ? (locale === "zh" ? "（已固定）" : " (Pinned)") : ""}
+                </div>
+                <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(activeInfo.equity)}</div>
+                <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(activeInfo.returnPct)}</div>
+                <div>{locale === "zh" ? "回撤" : "Drawdown"}: {formatPct(activeInfo.drawdownPct)}</div>
+              </div>
+              {pinnedRow && selectedTradeRow && selectedTradeRow.day === activeInfo.day && selectedTradeRow.trades.length > 0 ? (
+                <div className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm backdrop-blur-[1px]">
+                  <div className="mb-1 font-medium">{locale === "zh" ? "交易详情" : "Trade Details"}</div>
+                  <div className="space-y-1 text-muted-foreground">
+                    {selectedTradeRow.trades.map((trade, idx) => (
+                      <div key={`${trade.timestamp}-${idx}`}>
+                        <span className="font-medium text-foreground">{trade.symbol}</span>
+                        {" · "}
+                        <span>{trade.action}</span>
+                        {" · "}
+                        <span>{formatMoney(trade.price)}</span>
+                        {typeof trade.pnl === "number" ? (
+                          <>
+                            {" · "}
+                            <span>{locale === "zh" ? "盈亏" : "PnL"}: {formatMoney(trade.pnl)}</span>
+                          </>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
 
       <div>
-        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          {locale === "zh" ? "回撤" : "Drawdown"}
-        </div>
         <div className="h-[82px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
@@ -425,7 +513,23 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 width={56}
                 domain={[Math.min(minDrawdown - 0.5, -0.5), 0]}
                 tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+                label={{
+                  value: locale === "zh" ? "鍥炴挙 (%)" : "Drawdown (%)",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 4,
+                  fill: axisColor,
+                  fontSize: 10,
+                }}
               />
+              {activeInfo ? (
+                <ReferenceLine
+                  x={activeInfo.ts}
+                  stroke={isDark ? "#71717a" : "#94a3b8"}
+                  strokeDasharray="3 3"
+                  strokeOpacity={0.75}
+                />
+              ) : null}
               <Area type="monotone" dataKey="drawdownPct" stroke={COLOR_PRESET.drawdownLine} strokeWidth={1} fill={COLOR_PRESET.drawdownFill} />
             </AreaChart>
           </ResponsiveContainer>
@@ -466,15 +570,15 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <span className="w-3 h-[2px] rounded-full bg-black" />
-          {locale === "zh" ? "策略累计收益" : "Strategy Return"}
+          {locale === "zh" ? "绛栫暐绱鏀剁泭" : "Strategy Return"}
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: palette.up }} />
-          {locale === "zh" ? "买点" : "Buy"}
+          {locale === "zh" ? "涔扮偣" : "Buy"}
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: palette.down }} />
-          {locale === "zh" ? "卖点" : "Sell"}
+          {locale === "zh" ? "鍗栫偣" : "Sell"}
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: palette.holdUp }} />
@@ -486,36 +590,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
         </span>
       </div>
 
-      {selectedTradeRow && selectedTradeRow.trades.length > 0 && (
-        <div className="rounded-md border border-border bg-muted/25 p-3">
-          <div className="mb-2 text-xs font-semibold text-foreground">
-            {locale === "zh" ? "交易详情" : "Trade Details"} · {formatDateByLocale(selectedTradeRow.day, locale)}
-          </div>
-          <div className="space-y-1.5">
-            {selectedTradeRow.trades.map((trade, idx) => (
-              <div key={`${trade.timestamp}-${idx}`} className="text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{trade.symbol}</span>
-                {" · "}
-                <span>{trade.action}</span>
-                {" · "}
-                <span>{formatMoney(trade.price)}</span>
-                {typeof trade.pnl === "number" ? (
-                  <>
-                    {" · "}
-                    <span>{locale === "zh" ? "盈亏" : "PnL"}: {formatMoney(trade.pnl)}</span>
-                  </>
-                ) : null}
-                {trade.reason ? (
-                  <>
-                    {" · "}
-                    <span>{locale === "zh" ? "原因" : "Reason"}: {trade.reason}</span>
-                  </>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      
     </div>
   );
 }
