@@ -1,7 +1,6 @@
 ﻿import {
   Area,
   AreaChart,
-  Brush,
   CartesianGrid,
   ComposedChart,
   Line,
@@ -153,7 +152,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const isDark = theme === "dark";
 
   const [windowPreset, setWindowPreset] = useState<WindowPreset>("6m");
-  const [brushRange, setBrushRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const [hoverRow, setHoverRow] = useState<ChartRow | null>(null);
   const [pinnedRow, setPinnedRow] = useState<ChartRow | null>(null);
   const [selectedTradeRow, setSelectedTradeRow] = useState<ChartRow | null>(null);
@@ -249,10 +247,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   };
 
   useEffect(() => {
-    if (rows.length === 0) {
-      setBrushRange({ start: 0, end: 0 });
-      return;
-    }
+    if (rows.length === 0) return;
     if (!userChangedPresetRef.current) {
       setWindowPreset(getSmartPresetByLength(rows.length));
     }
@@ -265,32 +260,13 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     }
   }, [rows.length, windowPreset]);
 
-  useEffect(() => {
-    if (rows.length <= 1) {
-      setBrushRange({ start: 0, end: 0 });
-      return;
-    }
-    const last = rows.length - 1;
-    const points = presetPoints[windowPreset];
-    if (!Number.isFinite(points) || rows.length <= points) {
-      setBrushRange({ start: 0, end: Math.max(1, last) });
-      return;
-    }
-    const start = Math.max(0, Math.min(rows.length - points, last - 1));
-    const end = Math.max(start + 1, last);
-    setBrushRange({ start, end });
-  }, [rows.length, windowPreset]);
-
   if (loading) return <SkeletonChart />;
   if (rows.length === 0) return null;
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
-  const maxIndex = rows.length - 1;
-  const hasBrush = maxIndex > 0;
-  const safeBrushStart = !hasBrush ? 0 : Math.min(Math.max(0, brushRange.start), maxIndex - 1);
-  const safeBrushEnd = !hasBrush ? 0 : Math.min(Math.max(safeBrushStart + 1, brushRange.end), maxIndex);
-  const visibleRows = hasBrush ? rows.slice(safeBrushStart, safeBrushEnd + 1) : rows;
+  const points = presetPoints[windowPreset];
+  const visibleRows = !Number.isFinite(points) || rows.length <= points ? rows : rows.slice(Math.max(0, rows.length - points));
   const visibleBands = useMemo(() => buildPositionBands(visibleRows), [visibleRows]);
   const visibleTsStart = visibleRows[0]?.ts ?? null;
   const visibleTsEnd = visibleRows[visibleRows.length - 1]?.ts ?? null;
@@ -566,37 +542,12 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
         </div>
       </div>
 
-      <div className="equity-brush h-[48px]">
+      <div className="h-[36px]">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={rows} margin={{ top: 0, right: 10, left: 56, bottom: 2 }}>
-            <XAxis
-              dataKey="ts"
-              type="number"
-              domain={["dataMin", "dataMax"]}
-              tick={false}
-              tickLine={false}
-              axisLine={false}
-            />
+          <AreaChart data={visibleRows} margin={{ top: 0, right: 10, left: 56, bottom: 0 }}>
+            <XAxis dataKey="ts" type="number" domain={["dataMin", "dataMax"]} hide />
             <YAxis hide />
             <Area type="monotone" dataKey="returnPct" stroke="#94a3b8" strokeWidth={1} fill="rgba(148, 163, 184, 0.12)" />
-            {hasBrush ? (
-              <Brush
-                dataKey="ts"
-                height={24}
-                stroke={isDark ? "#71717a" : "#94a3b8"}
-                travellerWidth={8}
-                startIndex={safeBrushStart}
-                endIndex={safeBrushEnd}
-                onChange={(next) => {
-                  const nextStartRaw = typeof next?.startIndex === "number" ? next.startIndex : safeBrushStart;
-                  const nextEndRaw = typeof next?.endIndex === "number" ? next.endIndex : safeBrushEnd;
-                  const start = Math.min(Math.max(0, nextStartRaw), maxIndex - 1);
-                  const end = Math.min(Math.max(start + 1, nextEndRaw), maxIndex);
-                  setBrushRange({ start, end });
-                }}
-                tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
-              />
-            ) : null}
           </AreaChart>
         </ResponsiveContainer>
       </div>
