@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/contexts/I18nContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useChartColor } from "@/contexts/ChartColorContext";
 import { formatDateByLocale } from "@/lib/date";
 import type { TradeRecord } from "@/lib/api";
 
@@ -53,10 +54,6 @@ type WindowPreset = "3m" | "6m" | "1y" | "all";
 
 const COLOR_PRESET = {
   curve: "#4f46e5",
-  buy: "#16a34a",
-  sell: "#dc2626",
-  holdUp: "rgba(22, 163, 74, 0.10)",
-  holdDown: "rgba(220, 38, 38, 0.10)",
   drawdown: "rgba(99, 102, 241, 0.18)",
 };
 
@@ -126,15 +123,15 @@ function SkeletonChart() {
 }
 
 function BuyDot(props: any) {
-  const { cx, cy, payload } = props;
+  const { cx, cy, payload, fill } = props;
   if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.buyCount) return null;
-  return <circle cx={cx} cy={cy} r={3.5} fill={COLOR_PRESET.buy} stroke="white" strokeWidth={1} />;
+  return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="white" strokeWidth={1} />;
 }
 
 function SellDot(props: any) {
-  const { cx, cy, payload } = props;
+  const { cx, cy, payload, fill } = props;
   if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.sellCount) return null;
-  return <circle cx={cx} cy={cy} r={3.5} fill={COLOR_PRESET.sell} stroke="white" strokeWidth={1} />;
+  return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="white" strokeWidth={1} />;
 }
 
 function CustomTooltip({ active, payload, label, locale }: any) {
@@ -164,6 +161,7 @@ function CustomTooltip({ active, payload, label, locale }: any) {
 export default function EquityChart({ data, trades, loading }: EquityChartProps) {
   const { locale, t } = useI18n();
   const { theme } = useTheme();
+  const { palette } = useChartColor();
   const isDark = theme === "dark";
   const [windowPreset, setWindowPreset] = useState<WindowPreset>("6m");
   const [brushRange, setBrushRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
@@ -313,7 +311,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 x2={band.x2}
                 y1={minReturn - 1}
                 y2={maxReturn + 1}
-                fill={band.positive ? COLOR_PRESET.holdUp : COLOR_PRESET.holdDown}
+                fill={band.positive ? palette.holdUp : palette.holdDown}
                 strokeOpacity={0}
               />
             ))}
@@ -353,7 +351,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               yAxisId="return"
               data={tradeBuys}
               dataKey="markerY"
-              fill={COLOR_PRESET.buy}
+              fill={palette.up}
               shape={<BuyDot />}
               name={locale === "zh" ? "买点" : "Buy"}
               legendType="circle"
@@ -363,7 +361,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               yAxisId="return"
               data={tradeSells}
               dataKey="markerY"
-              fill={COLOR_PRESET.sell}
+              fill={palette.down}
               shape={<SellDot />}
               name={locale === "zh" ? "卖点" : "Sell"}
               legendType="circle"
@@ -426,19 +424,19 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLOR_PRESET.buy }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: palette.up }} />
           {locale === "zh" ? "买点" : "Buy"}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLOR_PRESET.sell }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: palette.down }} />
           {locale === "zh" ? "卖点" : "Sell"}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: COLOR_PRESET.holdUp }} />
+          <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: palette.holdUp }} />
           {locale === "zh" ? "持仓正收益区间" : "Positive holding interval"}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: COLOR_PRESET.holdDown }} />
+          <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: palette.holdDown }} />
           {locale === "zh" ? "持仓负收益区间" : "Negative holding interval"}
         </span>
       </div>

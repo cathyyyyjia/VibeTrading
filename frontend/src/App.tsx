@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { I18nProvider } from "./contexts/I18nContext";
+import { ChartColorProvider } from "./contexts/ChartColorContext";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -43,20 +44,22 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light" switchable>
         <I18nProvider>
-          <TooltipProvider>
-            <AuthProvider>
-              <Toaster position="top-right" richColors closeButton />
-              <Switch>
-                <Route path="/login" component={Login} />
-                <Route path="/">
-                  <ProtectedRoute component={Home} />
-                </Route>
-                <Route>
-                  <ProtectedRoute component={Home} />
-                </Route>
-              </Switch>
-            </AuthProvider>
-          </TooltipProvider>
+          <ChartColorProvider>
+            <TooltipProvider>
+              <AuthProvider>
+                <Toaster position="top-right" richColors closeButton />
+                <Switch>
+                  <Route path="/login" component={Login} />
+                  <Route path="/">
+                    <ProtectedRoute component={Home} />
+                  </Route>
+                  <Route>
+                    <ProtectedRoute component={Home} />
+                  </Route>
+                </Switch>
+              </AuthProvider>
+            </TooltipProvider>
+          </ChartColorProvider>
         </I18nProvider>
       </ThemeProvider>
     </ErrorBoundary>

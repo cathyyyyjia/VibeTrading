@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Bell, Languages, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useI18n } from "@/contexts/I18nContext";
+import { useChartColor } from "@/contexts/ChartColorContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { NavTab } from "@/types";
 import { getMyProfile, updateMyProfile, type UserProfile } from "@/lib/api";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,11 +17,13 @@ import { Label } from "@/components/ui/label";
 export default function TopNav() {
   const [activeTab, setActiveTab] = useState<NavTab>("backtest");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [displayName, setDisplayName] = useState("");
   const { theme, toggleTheme } = useTheme();
   const { locale, toggleLocale, t } = useI18n();
+  const { mode, setMode } = useChartColor();
   const { user, signOut } = useAuth();
 
   const tabs: { id: NavTab; label: string; disabled: boolean }[] = [
@@ -180,6 +183,8 @@ export default function TopNav() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setProfileOpen(true)}>{t("nav.profile")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>{t("nav.settings")}</DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={signOut}>{t("nav.logout")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -215,6 +220,53 @@ export default function TopNav() {
             <Button onClick={onSaveProfile} disabled={savingProfile}>
               {savingProfile ? t("common.saving") : t("common.save")}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("nav.settingsTitle")}</DialogTitle>
+            <DialogDescription>{t("nav.settingsDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>{t("nav.colorPreference")}</Label>
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("greenUpRedDown")}
+                className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                  mode === "greenUpRedDown" ? "border-foreground bg-muted/70" : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <div className="text-sm font-medium">{t("nav.colorModeGreenUp")}</div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-600" />
+                  <span>{locale === "zh" ? "涨/买" : "Up/Buy"}</span>
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-600 ml-2" />
+                  <span>{locale === "zh" ? "跌/卖" : "Down/Sell"}</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("redUpGreenDown")}
+                className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                  mode === "redUpGreenDown" ? "border-foreground bg-muted/70" : "border-border hover:bg-muted/40"
+                }`}
+              >
+                <div className="text-sm font-medium">{t("nav.colorModeRedUp")}</div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-600" />
+                  <span>{locale === "zh" ? "涨/买" : "Up/Buy"}</span>
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-600 ml-2" />
+                  <span>{locale === "zh" ? "跌/卖" : "Down/Sell"}</span>
+                </div>
+              </button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setSettingsOpen(false)}>{t("common.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

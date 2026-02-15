@@ -4,6 +4,7 @@
 // ============================================================
 
 import { useEffect, useState } from 'react';
+import { Sparkles } from 'lucide-react';
 import KPICards from './KPICards';
 import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
@@ -160,10 +161,11 @@ export default function SimulationResult({ report, status, runId, indicatorPrefe
       {/* AI Summary */}
       {report?.aiSummary && (
         <div className="border rounded-lg px-4 py-3 bg-violet-50/70 border-violet-200 dark:bg-violet-950/25 dark:border-violet-800">
-          <div className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
+            <Sparkles className="w-3.5 h-3.5" />
             {locale === "zh" ? t("sim.aiSummaryZh") : t("sim.aiSummaryEn")}
           </div>
-          <p className="text-sm text-violet-900/90 dark:text-violet-100/90 leading-relaxed line-clamp-2">
+          <p className="text-sm text-violet-900/90 dark:text-violet-100/90 leading-relaxed">
             {locale === "zh" ? (report.aiSummary.zh || report.aiSummary.en) : (report.aiSummary.en || report.aiSummary.zh)}
           </p>
         </div>
