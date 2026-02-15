@@ -16,10 +16,9 @@ interface AIWorkspaceProps {
   steps: StepInfo[];
   progress: number;
   artifacts: RunStatusResponse['artifacts'] | null;
-  statusMessage: string;
 }
 
-export default function AIWorkspace({ status, runId, steps, progress, artifacts, statusMessage }: AIWorkspaceProps) {
+export default function AIWorkspace({ status, runId, steps, progress, artifacts }: AIWorkspaceProps) {
   const { t } = useI18n();
 
   const isIdle = status === 'idle';
@@ -33,13 +32,10 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
             <Sparkles className="w-4 h-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">{t('workspace.title')}</h2>
           </div>
-          <span className="text-[10px] font-mono text-muted-foreground border border-border rounded px-1.5 py-0.5">
-            v2.4
-          </span>
         </div>
         {!isIdle && (
           <p className="text-xs text-muted-foreground mt-1.5">
-            {statusMessage || t('workspace.subtitle')}
+            {t('workspace.subtitle')}
           </p>
         )}
       </div>

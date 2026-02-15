@@ -142,19 +142,20 @@ function SubtaskList({ step }: { step: StepInfo }) {
 }
 
 export default function WorkspaceStepCard({ step, isLast }: WorkspaceStepProps) {
+  const { t } = useI18n();
   const isActive = step.status === "running" || step.status === "done" || step.status === "error";
 
   const stepTitleMap: Record<string, string> = {
-    parse: "PARSE",
-    plan: "PLAN",
-    data: "DATA",
-    backtest: "BACKTEST",
-    report: "REPORT",
-    deploy: "DEPLOY",
+    parse: t("workspace.step.parse"),
+    plan: t("workspace.step.plan"),
+    data: t("workspace.step.data"),
+    backtest: t("workspace.step.backtest"),
+    report: t("workspace.step.report"),
+    deploy: t("workspace.step.deploy"),
   };
 
   const statusLabelMap: Record<string, string> = {
-    running: "Running",
+    running: t("workspace.step.running"),
   };
 
   return (

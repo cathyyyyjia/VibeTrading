@@ -65,16 +65,11 @@ export default function Home() {
               runId={runId}
               error={backtestError}
               onRetry={retry}
-              onLoadHistoryPrompt={(historyPrompt) => {
-                setPrompt(historyPrompt);
-                revisePrompt(); // Reset state
-              }}
             />
           </div>
           {/* Bottom Bar inside left column */}
           <BottomBar
             status={status}
-            statusMessage={statusMessage}
             onRevise={revisePrompt}
             onDeploy={() => setDeployModalOpen(true)}
           />
@@ -88,7 +83,6 @@ export default function Home() {
             steps={steps}
             progress={progress}
             artifacts={artifacts}
-            statusMessage={statusMessage}
           />
         </div>
       </div>

@@ -28,7 +28,6 @@ interface StrategyDesignerProps {
   runId: string | null;
   error: string | null;
   onRetry: () => void;
-  onLoadHistoryPrompt?: (prompt: string) => void;
 }
 
 export default function StrategyDesigner({
@@ -47,7 +46,6 @@ export default function StrategyDesigner({
   runId,
   error,
   onRetry,
-  onLoadHistoryPrompt,
 }: StrategyDesignerProps) {
   const { t } = useI18n();
 
@@ -85,7 +83,7 @@ export default function StrategyDesigner({
       <SimulationResult report={report} status={status} runId={runId} indicatorPreferences={indicatorPreferences} />
 
       {/* History Panel */}
-      <HistoryPanel onSelectPrompt={onLoadHistoryPrompt} />
+      <HistoryPanel />
     </div>
   );
 }

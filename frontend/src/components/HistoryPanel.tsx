@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, Copy, Trash2 } from 'lucide-react';
+import { ChevronDown, Download, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,11 +14,20 @@ import KPICards from './KPICards';
 import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
 
-interface HistoryPanelProps {
-  onSelectPrompt?: (prompt: string) => void;
+interface HistoryPanelProps {}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
+export default function HistoryPanel({}: HistoryPanelProps) {
   const { t } = useI18n();
   const { session } = useAuth();
   const [isOpen, setIsOpen] = useState(true);
@@ -75,32 +84,22 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
     const runIds = Array.from(expandedIds);
     for (const runId of runIds) {
       const existing = detailsByRunId[runId];
-      if (existing?.equity || existing?.trades || existing?.dsl) continue;
+      if (existing?.equity || existing?.trades) continue;
       api
         .getRunReport(runId)
         .then((rep) => {
           setDetailsByRunId((prev) => ({ ...prev, [runId]: { ...(prev[runId] ?? {}), ...rep } }));
         })
         .catch(() => {});
-      api
-        .getRunArtifact(runId, "dsl.json")
-        .then((a) => {
-          const dsl = a?.content ? JSON.stringify(a.content, null, 2) : "";
-          setDetailsByRunId((prev) => ({ ...prev, [runId]: { ...(prev[runId] ?? {}), dsl } }));
-        })
-        .catch(() => {});
     }
   }, [expandedIds, detailsByRunId]);
 
-  const handleCopyDsl = (dsl: string) => {
-    navigator.clipboard.writeText(dsl);
-    toast.success(t('history.dslCopied'));
-  };
-
-  const handleLoadPrompt = (prompt: string) => {
-    if (onSelectPrompt) {
-      onSelectPrompt(prompt);
-      toast.success(t('history.promptLoaded'));
+  const handleDownloadArtifact = async (runId: string, name: string) => {
+    try {
+      const blob = await api.downloadRunArtifact(runId, name);
+      triggerDownload(blob, `${runId}-${name}`);
+    } catch {
+      toast.error(t('history.downloadFailed'));
     }
   };
 
@@ -134,7 +133,7 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
 
   if (loading) {
     return (
-      <div className="border-t border-border pt-6">
+      <div className="border-t border-border pt-8 mt-8">
         <div className="h-4 w-32 bg-muted rounded animate-pulse" />
       </div>
     );
@@ -235,7 +234,12 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
                         <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
                           {t('history.equityCurve')}
                         </h3>
-                        <EquityChart data={merged.equity} loading={false} />
+                        <EquityChart
+                          data={merged.equity}
+                          market={merged.market || null}
+                          trades={merged.trades || null}
+                          loading={false}
+                        />
                       </div>
                     )}
 
@@ -249,34 +253,35 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
                       </div>
                     )}
 
-                    {/* DSL Section */}
+                    {/* Download Section */}
                     <div className="border-t border-border pt-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-xs font-semibold text-muted-foreground uppercase">
-                          {t('history.strategyDsl')}
-                        </h3>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+                        {t('history.downloadResults')}
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
                         <button
-                          onClick={() => handleCopyDsl(merged.dsl)}
-                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          onClick={() => void handleDownloadArtifact(entry.runId, "dsl.json")}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-muted/30 transition-colors"
                         >
-                          <Copy className="w-3 h-3" />
-                          {t('history.copy')}
+                          <Download className="w-3.5 h-3.5" />
+                          DSL JSON
+                        </button>
+                        <button
+                          onClick={() => void handleDownloadArtifact(entry.runId, "report.json")}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-muted/30 transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Report JSON
+                        </button>
+                        <button
+                          onClick={() => void handleDownloadArtifact(entry.runId, "trades.csv")}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-muted/30 transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Trades CSV
                         </button>
                       </div>
-                      <div className="bg-foreground text-primary-foreground rounded p-3 text-xs font-mono overflow-x-auto max-h-[120px] overflow-y-auto">
-                        <pre className="whitespace-pre-wrap break-words text-[10px]">
-                          {merged.dsl ? `${merged.dsl.substring(0, 300)}...` : t('history.loadingReport')}
-                        </pre>
-                      </div>
                     </div>
-
-                    {/* Load Prompt Button */}
-                    <button
-                      onClick={() => handleLoadPrompt(entry.prompt)}
-                      className="w-full px-3 py-2 text-xs font-medium text-foreground border border-border rounded hover:bg-muted/30 transition-colors"
-                    >
-                      {t('history.loadStrategy')}
-                    </button>
                   </div>
                 )}
               </div>

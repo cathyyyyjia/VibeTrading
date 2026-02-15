@@ -16,6 +16,7 @@ from app.db.engine import SessionLocal
 from app.db.models import Run, RunArtifact, RunStep, Strategy, Trade
 from app.schemas.contracts import NaturalLanguageStrategyRequest
 from app.services.backtest_engine import run_backtest_from_spec
+from app.services.llm_client import llm_client
 from app.services.storage_service import upload_artifact_content, storage_enabled
 from app.services.spec_builder import nl_to_strategy_spec
 
@@ -42,6 +43,75 @@ def _log(level: Literal["DEBUG", "INFO", "WARN", "ERROR"], msg: str, kv: dict[st
 
 def _queue_dedupe_key(run_id: uuid.UUID) -> str:
   return f"vibe:run:queued:{run_id}"
+
+
+def _fallback_ai_summary(kpis: dict[str, Any]) -> dict[str, str]:
+  ret = float(kpis.get("return_pct") or 0.0)
+  sharpe = float(kpis.get("sharpe") or 0.0)
+  max_dd = float(kpis.get("max_dd_pct") or 0.0)
+  trades = int(kpis.get("trades") or 0)
+  en = (
+    f"The strategy returned {ret:.2f}% with Sharpe {sharpe:.2f}, max drawdown {max_dd:.2f}% "
+    f"across {trades} trades. Improve risk control and entry timing to stabilize performance."
+  )
+  zh = (
+    f"该策略收益率为 {ret:.2f}%，夏普 {sharpe:.2f}，最大回撤 {max_dd:.2f}%，共 {trades} 笔交易。"
+    "建议进一步优化风控和入场时机，提升稳定性。"
+  )
+  return {"en": en, "zh": zh}
+
+
+async def _generate_ai_summary(
+  *,
+  prompt: str,
+  strategy_name: str,
+  kpis: dict[str, Any],
+  start_date: str,
+  end_date: str,
+) -> dict[str, str]:
+  if not llm_client.is_configured:
+    return _fallback_ai_summary(kpis)
+
+  schema = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["en", "zh"],
+    "properties": {
+      "en": {"type": "string", "minLength": 20, "maxLength": 240},
+      "zh": {"type": "string", "minLength": 20, "maxLength": 240},
+    },
+  }
+
+  system_prompt = (
+    "You are a quant trading assistant. Provide concise, friendly backtest interpretation. "
+    "Keep each language to roughly 1-2 sentences and avoid bullet points."
+  )
+  user_prompt = (
+    "Generate a bilingual summary for this backtest.\n"
+    f"Strategy name: {strategy_name}\n"
+    f"User prompt: {prompt}\n"
+    f"Period: {start_date} to {end_date}\n"
+    f"KPIs: {kpis}\n"
+    "Output JSON with keys en and zh. "
+    "Include: key result, one strength, one improvement suggestion."
+  )
+
+  try:
+    data = await llm_client.chat_json(
+      system_prompt,
+      user_prompt,
+      schema_name="backtest_ai_summary",
+      json_schema=schema,
+      strict_schema=True,
+    )
+    en = str(data.get("en") or "").strip()
+    zh = str(data.get("zh") or "").strip()
+    if not en or not zh:
+      return _fallback_ai_summary(kpis)
+    return {"en": en, "zh": zh}
+  except Exception:
+    logger.exception("ai_summary_generation_failed")
+    return _fallback_ai_summary(kpis)
 
 
 async def _clear_queue_lock(run_id: uuid.UUID) -> None:
@@ -259,6 +329,13 @@ async def execute_run(
         await db.commit()
 
       result = await run_backtest_from_spec(spec, start_date=start_date, end_date=end_date, progress_hook=_on_backtest_progress)
+      ai_summary = await _generate_ai_summary(
+        prompt=str(strategy.prompt or ""),
+        strategy_name=str(strategy.name or "Untitled"),
+        kpis=result.kpis,
+        start_date=start_date,
+        end_date=end_date,
+      )
       resolved = (result.artifacts or {}).get("resolved") if isinstance(result.artifacts, dict) else {}
       universe = (resolved or {}).get("universe") if isinstance(resolved, dict) else {}
       await _set_step_state(
@@ -280,7 +357,15 @@ async def execute_run(
       )
 
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Generating report"))
-      report = jsonable_encoder({"kpis": result.kpis, "equity": result.equity, "trades": result.trades})
+      report = jsonable_encoder(
+        {
+          "kpis": result.kpis,
+          "equity": result.equity,
+          "market": result.market,
+          "trades": result.trades,
+          "ai_summary": ai_summary,
+        }
+      )
       await _upsert_artifact(db, run_id, "report.json", "json", f"/api/runs/{run_id}/report", content=report)
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "Report artifact persisted"))
       await _upsert_artifact(
@@ -290,6 +375,14 @@ async def execute_run(
         "json",
         f"/api/runs/{run_id}/artifacts/kpis.json",
         content={"kpis": result.kpis},
+      )
+      await _upsert_artifact(
+        db,
+        run_id,
+        "ai_summary.json",
+        "json",
+        f"/api/runs/{run_id}/artifacts/ai_summary.json",
+        content=ai_summary,
       )
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "KPI snapshot generated"))
       report_md = f"# Backtest Report\n\n- Trades: {len(result.trades)}\n- Return%: {result.kpis.get('return_pct'):.2f}\n- Sharpe: {result.kpis.get('sharpe'):.2f}\n- MaxDD%: {result.kpis.get('max_dd_pct'):.2f}\n"

@@ -16,6 +16,7 @@ from app.services.market_data import MinuteBar, compute_data_health, get_market_
 @dataclass(frozen=True)
 class BacktestResult:
   equity: list[dict[str, Any]]
+  market: list[dict[str, Any]]
   trades: list[dict[str, Any]]
   kpis: dict[str, Any]
   artifacts: dict[str, Any]
@@ -208,6 +209,7 @@ async def run_backtest_from_spec(
   slippage_bps = float((strategy_spec.get("execution") or {}).get("slippage_bps") or 0.0)
   commission_per_trade = float((strategy_spec.get("execution") or {}).get("commission_per_trade") or 0.0)
   session_rows: list[dict[str, Any]] = []
+  market_candles: list[dict[str, Any]] = []
   total_sessions = len(sessions)
   skipped_sessions: list[dict[str, Any]] = []
 
@@ -286,6 +288,11 @@ async def run_backtest_from_spec(
           pass
       continue
 
+    session_open_trade = float(bars_trade[0].o)
+    session_high_trade = float(max(b.h for b in bars_trade))
+    session_low_trade = float(min(b.l for b in bars_trade))
+    session_close_trade = float(bars_trade[-1].c)
+
     decision_bar_signal = _last_bar_at_or_before(bars_signal, decision_ts)
     decision_bar_trade = _last_bar_at_or_before(bars_trade, decision_ts)
     close_bar_signal = _last_bar_at_or_before(bars_signal, session_close)
@@ -305,6 +312,16 @@ async def run_backtest_from_spec(
         except Exception:
           pass
       continue
+
+    market_candles.append(
+      {
+        "t": session_close,
+        "o": session_open_trade,
+        "h": session_high_trade,
+        "l": session_low_trade,
+        "c": session_close_trade,
+      }
+    )
 
     daily_signal_close.append(float(close_bar_signal.c))
     daily_trade_close.append(float(close_bar_trade.c))
@@ -733,4 +750,4 @@ async def run_backtest_from_spec(
     },
   }
 
-  return BacktestResult(equity=equity, trades=trades, kpis=kpis, artifacts=artifacts)
+  return BacktestResult(equity=equity, market=market_candles, trades=trades, kpis=kpis, artifacts=artifacts)

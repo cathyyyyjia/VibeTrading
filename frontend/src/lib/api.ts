@@ -145,7 +145,9 @@ export interface RunReportResponse {
   kpis: LegacyKPIs;
   summary?: BacktestSummary;
   equity: Array<{ t?: number; v?: number; timestamp?: string; value?: number }>;
+  market?: Array<{ t: string; o: number; h: number; l: number; c: number }>;
   trades: TradeRecord[];
+  aiSummary?: { en: string; zh: string } | null;
 }
 
 export interface DeployResponse {
@@ -169,6 +171,7 @@ type V0BacktestReportResponse = {
     win_rate: number;
     avg_holding_days: number;
   };
+  market?: Array<{ t: string; o: number; h: number; l: number; c: number }>;
   equity: Array<{ t: string; v: number }>;
   trades: Array<{
     decision_time: string;
@@ -182,6 +185,7 @@ type V0BacktestReportResponse = {
     pnl?: number;
     pnl_pct?: number;
   }>;
+  ai_summary?: { en?: string; zh?: string } | null;
 };
 
 function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string {
@@ -331,7 +335,27 @@ export async function getRunReport(runId: string): Promise<RunReportResponse> {
     totalTrades: data.kpis.trades,
   };
 
-  return { kpis, summary, equity, trades };
+  const market = Array.isArray(data.market)
+    ? data.market
+        .filter((c) => c && typeof c.t === "string")
+        .map((c) => ({
+          t: c.t,
+          o: Number(c.o),
+          h: Number(c.h),
+          l: Number(c.l),
+          c: Number(c.c),
+        }))
+    : [];
+
+  const aiSummary =
+    data.ai_summary && typeof data.ai_summary === "object"
+      ? {
+          en: typeof data.ai_summary.en === "string" ? data.ai_summary.en : "",
+          zh: typeof data.ai_summary.zh === "string" ? data.ai_summary.zh : "",
+        }
+      : null;
+
+  return { kpis, summary, equity, market, trades, aiSummary };
 }
 
 export async function deployRun(runId: string, mode: "paper" | "live"): Promise<DeployResponse> {
@@ -353,7 +377,9 @@ export interface HistoryEntry {
   kpis: LegacyKPIs | null;
   summary?: BacktestSummary | null;
   equity: RunReportResponse["equity"] | null;
+  market?: RunReportResponse["market"] | null;
   trades: TradeRecord[] | null;
+  aiSummary?: RunReportResponse["aiSummary"] | null;
   dsl: string;
   artifactUris?: Record<string, string>;
 }
@@ -396,7 +422,9 @@ export async function getHistory(): Promise<GetHistoryResponse> {
       kpis,
       summary: null,
       equity: null,
+      market: null,
       trades: null,
+      aiSummary: null,
       dsl: "",
       artifactUris: h.artifacts,
     };

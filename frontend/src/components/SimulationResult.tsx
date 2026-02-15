@@ -107,7 +107,7 @@ function buildStrategySummary(content: any): StrategySummary | null {
 }
 
 export default function SimulationResult({ report, status, runId, indicatorPreferences }: SimulationResultProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const [summary, setSummary] = useState<StrategySummary | null>(null);
@@ -157,8 +157,25 @@ export default function SimulationResult({ report, status, runId, indicatorPrefe
       {/* KPI Cards */}
       <KPICards kpis={report?.kpis || null} loading={isLoading && !report} />
 
+      {/* AI Summary */}
+      {report?.aiSummary && (
+        <div className="border rounded-lg px-4 py-3 bg-violet-50/70 border-violet-200 dark:bg-violet-950/25 dark:border-violet-800">
+          <div className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
+            {locale === "zh" ? t("sim.aiSummaryZh") : t("sim.aiSummaryEn")}
+          </div>
+          <p className="text-sm text-violet-900/90 dark:text-violet-100/90 leading-relaxed line-clamp-2">
+            {locale === "zh" ? (report.aiSummary.zh || report.aiSummary.en) : (report.aiSummary.en || report.aiSummary.zh)}
+          </p>
+        </div>
+      )}
+
       {/* Equity Chart */}
-      <EquityChart data={report?.equity || null} loading={isLoading && !report} />
+      <EquityChart
+        data={report?.equity || null}
+        market={report?.market || null}
+        trades={report?.trades || null}
+        loading={isLoading && !report}
+      />
 
       {/* Strategy Summary */}
       {summary && (

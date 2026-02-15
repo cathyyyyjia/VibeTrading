@@ -62,6 +62,14 @@ class EquityPoint(BaseModel):
   v: float
 
 
+class MarketCandle(BaseModel):
+  t: datetime
+  o: float
+  h: float
+  l: float
+  c: float
+
+
 class BacktestKpis(BaseModel):
   return_pct: float
   cagr_pct: float
@@ -88,7 +96,9 @@ class BacktestTrade(BaseModel):
 class BacktestReportResponse(BaseModel):
   kpis: BacktestKpis
   equity: list[EquityPoint]
+  market: list[MarketCandle] = Field(default_factory=list)
   trades: list[BacktestTrade]
+  ai_summary: dict[str, str] | None = None
 
 
 class RunHistoryEntry(BaseModel):
