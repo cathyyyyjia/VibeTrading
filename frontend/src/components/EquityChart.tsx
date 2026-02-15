@@ -342,7 +342,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={visibleRows}
-              syncId="bt-chart"
               margin={{ top: 6, right: 10, left: 2, bottom: 0 }}
               onMouseMove={(state: any) => {
                 if (pinnedRow) return;
@@ -534,7 +533,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       <div>
         <div className="h-[82px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={visibleRows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+            <AreaChart data={visibleRows} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
               <XAxis dataKey="ts" type="number" domain={["dataMin", "dataMax"]} hide />
               <YAxis
@@ -569,7 +568,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
       <div className="equity-brush h-[48px]">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 56, bottom: 2 }}>
+          <AreaChart data={rows} margin={{ top: 0, right: 10, left: 56, bottom: 2 }}>
             <XAxis
               dataKey="ts"
               type="number"
