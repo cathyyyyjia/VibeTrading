@@ -209,3 +209,7 @@
   font-size: 0.8125rem;
   line-height: 1.6;
 }
+
+.equity-brush .recharts-brush text {
+  font-size: 10px;
+}

@@ -119,8 +119,9 @@ function buildPositionBands(rows: ChartRow[]): PositionBand[] {
 }
 
 function getSmartPresetByLength(length: number): WindowPreset {
-  if (length <= 90) return "3m";
-  if (length <= 180) return "6m";
+  if (length < 63) return "all";
+  if (length < 126) return "3m";
+  if (length < 252) return "6m";
   if (length <= 300) return "1y";
   return "all";
 }
@@ -243,6 +244,10 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     "1y": 252,
     all: Number.POSITIVE_INFINITY,
   };
+  const isPresetAllowed = (preset: WindowPreset, length: number): boolean => {
+    if (preset === "all") return true;
+    return length >= presetPoints[preset];
+  };
 
   useEffect(() => {
     if (rows.length === 0) {
@@ -252,6 +257,20 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     if (!userChangedPresetRef.current) {
       setWindowPreset(getSmartPresetByLength(rows.length));
     }
+  }, [rows.length]);
+
+  useEffect(() => {
+    if (rows.length === 0) return;
+    if (!isPresetAllowed(windowPreset, rows.length)) {
+      setWindowPreset(getSmartPresetByLength(rows.length));
+    }
+  }, [rows.length, windowPreset]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setBrushRange({ start: 0, end: 0 });
+      return;
+    }
     const last = rows.length - 1;
     const points = presetPoints[windowPreset];
     if (!Number.isFinite(points) || rows.length <= points) {
@@ -259,7 +278,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       return;
     }
     const start = Math.max(0, rows.length - points);
-    setBrushRange({ start, end: last });
+    const end = Math.max(start, last);
+    setBrushRange({ start, end });
   }, [rows.length, windowPreset]);
 
   if (loading) return <SkeletonChart />;
@@ -275,17 +295,21 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
+  const maxIndex = rows.length - 1;
+  const safeBrushStart = maxIndex < 0 ? 0 : Math.min(Math.max(0, brushRange.start), maxIndex);
+  const safeBrushEnd = maxIndex < 0 ? 0 : Math.min(Math.max(safeBrushStart, brushRange.end), maxIndex);
   const presetButtons: Array<{ key: WindowPreset; label: string }> = [
     { key: "3m", label: t("strategy.backtestPreset3m") },
     { key: "6m", label: t("strategy.backtestPreset6m") },
     { key: "1y", label: t("strategy.backtestPreset1y") },
     { key: "all", label: t("strategy.backtestPresetAll") },
   ];
+  const visiblePresetButtons = presetButtons.filter((preset) => isPresetAllowed(preset.key, rows.length));
 
   return (
     <div className="border border-border rounded-lg p-4 bg-card space-y-3">
       <div className="flex items-center justify-end gap-1.5">
-        {presetButtons.map((preset) => {
+        {visiblePresetButtons.map((preset) => {
           const active = windowPreset === preset.key;
           return (
             <button
@@ -397,7 +421,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
               <Line
                 yAxisId="return"
-                type="linear"
+                type="monotone"
                 dataKey="returnPct"
                 stroke={COLOR_PRESET.curve}
                 strokeWidth={1.9}
@@ -536,9 +560,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
         </div>
       </div>
 
-      <div className="h-[48px]">
+      <div className="equity-brush h-[48px]">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 2 }}>
+          <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 56, bottom: 2 }}>
             <XAxis
               dataKey="ts"
               type="number"
@@ -554,11 +578,13 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               height={24}
               stroke={isDark ? "#71717a" : "#94a3b8"}
               travellerWidth={8}
-              startIndex={brushRange.start}
-              endIndex={brushRange.end}
+              startIndex={safeBrushStart}
+              endIndex={safeBrushEnd}
               onChange={(next) => {
-                const start = typeof next?.startIndex === "number" ? next.startIndex : brushRange.start;
-                const end = typeof next?.endIndex === "number" ? next.endIndex : brushRange.end;
+                const nextStartRaw = typeof next?.startIndex === "number" ? next.startIndex : safeBrushStart;
+                const nextEndRaw = typeof next?.endIndex === "number" ? next.endIndex : safeBrushEnd;
+                const start = maxIndex < 0 ? 0 : Math.min(Math.max(0, nextStartRaw), maxIndex);
+                const end = maxIndex < 0 ? 0 : Math.min(Math.max(start, nextEndRaw), maxIndex);
                 setBrushRange({ start, end });
               }}
               tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
