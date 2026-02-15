@@ -9,6 +9,7 @@ import ErrorCard from './ErrorCard';
 import HistoryPanel from './HistoryPanel';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
+import type { BacktestWindowPreset } from '@/lib/date';
 import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
 
 interface StrategyDesignerProps {
@@ -18,6 +19,11 @@ interface StrategyDesignerProps {
   onRunBacktest: () => void;
   indicatorPreferences: IndicatorPreferences;
   onIndicatorPreferencesChange: (next: IndicatorPreferences) => void;
+  backtestWindowPreset: BacktestWindowPreset;
+  backtestStartDate: string;
+  backtestEndDate: string;
+  onBacktestWindowPresetChange: (preset: BacktestWindowPreset) => void;
+  onBacktestDateRangeChange: (next: { startDate: string; endDate: string }) => void;
   report: RunReportResponse | null;
   runId: string | null;
   error: string | null;
@@ -32,6 +38,11 @@ export default function StrategyDesigner({
   onRunBacktest,
   indicatorPreferences,
   onIndicatorPreferencesChange,
+  backtestWindowPreset,
+  backtestStartDate,
+  backtestEndDate,
+  onBacktestWindowPresetChange,
+  onBacktestDateRangeChange,
   report,
   runId,
   error,
@@ -57,6 +68,11 @@ export default function StrategyDesigner({
         onRunBacktest={onRunBacktest}
         indicatorPreferences={indicatorPreferences}
         onIndicatorPreferencesChange={onIndicatorPreferencesChange}
+        backtestWindowPreset={backtestWindowPreset}
+        backtestStartDate={backtestStartDate}
+        backtestEndDate={backtestEndDate}
+        onBacktestWindowPresetChange={onBacktestWindowPresetChange}
+        onBacktestDateRangeChange={onBacktestDateRangeChange}
         status={status}
       />
 

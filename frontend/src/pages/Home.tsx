@@ -24,8 +24,13 @@ export default function Home() {
     error: backtestError,
     statusMessage,
     indicatorPreferences,
+    backtestWindowPreset,
+    backtestStartDate,
+    backtestEndDate,
     setPrompt,
     setIndicatorPreferences,
+    setBacktestWindowPreset,
+    setBacktestDateRange,
     runBacktest,
     revisePrompt,
     deploy,
@@ -51,6 +56,11 @@ export default function Home() {
               onRunBacktest={runBacktest}
               indicatorPreferences={indicatorPreferences}
               onIndicatorPreferencesChange={setIndicatorPreferences}
+              backtestWindowPreset={backtestWindowPreset}
+              backtestStartDate={backtestStartDate}
+              backtestEndDate={backtestEndDate}
+              onBacktestWindowPresetChange={setBacktestWindowPreset}
+              onBacktestDateRangeChange={setBacktestDateRange}
               report={report}
               runId={runId}
               error={backtestError}

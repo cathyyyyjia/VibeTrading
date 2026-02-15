@@ -58,6 +58,14 @@ async def post_run(
   db: AsyncSession = Depends(get_db),
   claims: tuple[str, dict[str, Any]] = Depends(get_auth_claims),
 ) -> CreateRunResponse:
+  if req.start_date > req.end_date:
+    raise AppError(
+      "VALIDATION_ERROR",
+      "start_date cannot be later than end_date",
+      {"start_date": req.start_date.isoformat(), "end_date": req.end_date.isoformat()},
+      http_status=400,
+    )
+
   provider, payload = claims
   user = await ensure_user_from_claims(db, provider, payload)
   run = await create_run(db, req, user_id=user.id)

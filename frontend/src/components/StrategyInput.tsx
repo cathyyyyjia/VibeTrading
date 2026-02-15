@@ -3,11 +3,15 @@
 // + Example prompt buttons in idle state
 // ============================================================
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Play, Plus, Sparkles } from 'lucide-react';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { IndicatorPreferences } from '@/lib/api';
+import { formatDateByLocale, isIsoDate, type BacktestWindowPreset } from '@/lib/date';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface StrategyInputProps {
   prompt: string;
@@ -15,6 +19,11 @@ interface StrategyInputProps {
   onRunBacktest: () => void;
   indicatorPreferences: IndicatorPreferences;
   onIndicatorPreferencesChange: (next: IndicatorPreferences) => void;
+  backtestWindowPreset: BacktestWindowPreset;
+  backtestStartDate: string;
+  backtestEndDate: string;
+  onBacktestWindowPresetChange: (preset: BacktestWindowPreset) => void;
+  onBacktestDateRangeChange: (next: { startDate: string; endDate: string }) => void;
   status: AppStatus;
 }
 
@@ -39,10 +48,16 @@ export default function StrategyInput({
   onRunBacktest,
   indicatorPreferences,
   onIndicatorPreferencesChange,
+  backtestWindowPreset,
+  backtestStartDate,
+  backtestEndDate,
+  onBacktestWindowPresetChange,
+  onBacktestDateRangeChange,
   status,
 }: StrategyInputProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [advancedModule, setAdvancedModule] = useState<'indicators' | 'window'>('indicators');
   const [maSelection, setMaSelection] = useState<'preset' | 'custom'>('preset');
   const [macdSelection, setMacdSelection] = useState<'preset' | 'custom'>('preset');
   const isRunning = status === 'running' || status === 'analyzing';
@@ -53,6 +68,17 @@ export default function StrategyInput({
     { fast: 10, slow: 22, signal: 5 },
     { fast: 10, slow: 20, signal: 5 },
   ];
+  const rangePresets: Array<{ key: Exclude<BacktestWindowPreset, "custom">; label: string }> = [
+    { key: '1m', label: t('strategy.backtestPreset1m') },
+    { key: '3m', label: t('strategy.backtestPreset3m') },
+    { key: '6m', label: t('strategy.backtestPreset6m') },
+    { key: '1y', label: t('strategy.backtestPreset1y') },
+  ];
+  const isDateRangeInvalid = useMemo(() => {
+    if (!isIsoDate(backtestStartDate) || !isIsoDate(backtestEndDate)) return true;
+    return backtestStartDate > backtestEndDate;
+  }, [backtestEndDate, backtestStartDate]);
+  const formattedRangeSummary = `${formatDateByLocale(backtestStartDate, locale)} ~ ${formatDateByLocale(backtestEndDate, locale)}`;
 
   const updateIndicatorPreference = (partial: Partial<IndicatorPreferences>) => {
     onIndicatorPreferencesChange({ ...indicatorPreferences, ...partial });
@@ -101,7 +127,7 @@ export default function StrategyInput({
         {/* Run Backtest Button */}
         <button
           onClick={onRunBacktest}
-          disabled={isRunning || !prompt.trim()}
+          disabled={isRunning || !prompt.trim() || isDateRangeInvalid}
           className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-foreground text-primary-foreground text-sm font-medium rounded-lg hover:bg-foreground/90 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
         >
           {isRunning ? (
@@ -117,6 +143,9 @@ export default function StrategyInput({
           )}
         </button>
       </div>
+      {isDateRangeInvalid && (
+        <p className="text-xs text-red-500">{t('strategy.invalidDateRange')}</p>
+      )}
 
       <div className="border border-border rounded-lg bg-card/40">
         <button
@@ -130,138 +159,192 @@ export default function StrategyInput({
 
         {advancedOpen && (
           <div className="px-3 pb-3 space-y-3">
-            <div className="space-y-2">
-              <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.maWindow')}</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {maPresets.map((window) => (
-                  <button
-                    key={window}
-                    type="button"
-                    disabled={isRunning}
-                    onClick={() => {
-                      setMaSelection('preset');
-                      updateIndicatorPreference({ maWindowDays: window });
-                    }}
-                    className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
-                      maSelection === 'preset' && indicatorPreferences.maWindowDays === window
-                        ? 'bg-foreground text-primary-foreground border-foreground'
-                        : 'bg-background border-border text-foreground hover:border-foreground/40'
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  >
-                    {`MA${window}`}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  disabled={isRunning}
-                  onClick={() => setMaSelection((v) => (v === 'custom' ? 'preset' : 'custom'))}
-                  className={`h-7 px-2.5 text-xs rounded-md border transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 ${
-                    maSelection === 'custom'
-                      ? 'bg-foreground text-primary-foreground border-foreground'
-                      : 'border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/40'
-                  }`}
-                >
-                  <Plus className="w-3 h-3" />
-                  {t('strategy.addCustom')}
-                </button>
-                {maSelection === 'custom' && (
-                  <input
-                    type="number"
-                    min={1}
-                    disabled={isRunning}
-                    value={indicatorPreferences.maWindowDays}
-                    onChange={(e) => handleMaInputChange(e.target.value)}
-                    className="w-32 h-7 px-2.5 text-xs border border-border rounded-md bg-background text-foreground"
-                    placeholder={t('strategy.maCustomPlaceholder')}
-                    aria-label="MA window days"
-                  />
-                )}
-              </div>
-            </div>
+            <Tabs value={advancedModule} onValueChange={(next) => setAdvancedModule(next as 'indicators' | 'window')}>
+              <TabsList className="w-full">
+                <TabsTrigger value="indicators" className="text-xs">{t('strategy.advancedModuleIndicators')}</TabsTrigger>
+                <TabsTrigger value="window" className="text-xs">{t('strategy.advancedModuleBacktestWindow')}</TabsTrigger>
+              </TabsList>
 
-            <div className="space-y-2">
-              <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.macdParams')}</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {macdPresets.map((preset) => {
-                  const active =
-                    macdSelection === 'preset' &&
-                    indicatorPreferences.macdFast === preset.fast &&
-                    indicatorPreferences.macdSlow === preset.slow &&
-                    indicatorPreferences.macdSignal === preset.signal;
-                  return (
-                    <button
-                      key={`${preset.fast}-${preset.slow}-${preset.signal}`}
+              <TabsContent value="indicators" className="space-y-3 mt-2">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.maWindow')}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {maPresets.map((window) => (
+                      <Button
+                        key={window}
+                        type="button"
+                        size="sm"
+                        variant={maSelection === 'preset' && indicatorPreferences.maWindowDays === window ? "default" : "outline"}
+                        disabled={isRunning}
+                        onClick={() => {
+                          setMaSelection('preset');
+                          updateIndicatorPreference({ maWindowDays: window });
+                        }}
+                        className="h-7 text-xs"
+                      >
+                        {`MA${window}`}
+                      </Button>
+                    ))}
+                    <Button
                       type="button"
+                      size="sm"
+                      variant={maSelection === 'custom' ? 'default' : 'outline'}
                       disabled={isRunning}
-                      onClick={() =>
-                        {
-                          setMacdSelection('preset');
-                          updateIndicatorPreference({
-                            macdFast: preset.fast,
-                            macdSlow: preset.slow,
-                            macdSignal: preset.signal,
-                          });
-                        }
-                      }
-                      className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
-                        active
-                          ? 'bg-foreground text-primary-foreground border-foreground'
-                          : 'bg-background border-border text-foreground hover:border-foreground/40'
-                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      onClick={() => setMaSelection((v) => (v === 'custom' ? 'preset' : 'custom'))}
+                      className="h-7 text-xs"
                     >
-                      {`MACD ${preset.fast}/${preset.slow}/${preset.signal}`}
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  disabled={isRunning}
-                  onClick={() => setMacdSelection((v) => (v === 'custom' ? 'preset' : 'custom'))}
-                  className={`h-7 px-2.5 text-xs rounded-md border transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 ${
-                    macdSelection === 'custom'
-                      ? 'bg-foreground text-primary-foreground border-foreground'
-                      : 'border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground/40'
-                  }`}
-                >
-                  <Plus className="w-3 h-3" />
-                  {t('strategy.addCustom')}
-                </button>
-                {macdSelection === 'custom' && (
-                  <>
-                    <input
-                      type="number"
-                      min={1}
+                      <Plus className="w-3 h-3" />
+                      {t('strategy.addCustom')}
+                    </Button>
+                    {maSelection === 'custom' && (
+                      <Input
+                        type="number"
+                        min={1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.maWindowDays}
+                        onChange={(e) => handleMaInputChange(e.target.value)}
+                        className="w-32 h-7 text-xs"
+                        placeholder={t('strategy.maCustomPlaceholder')}
+                        aria-label="MA window days"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.macdParams')}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {macdPresets.map((preset) => {
+                      const active =
+                        macdSelection === 'preset' &&
+                        indicatorPreferences.macdFast === preset.fast &&
+                        indicatorPreferences.macdSlow === preset.slow &&
+                        indicatorPreferences.macdSignal === preset.signal;
+                      return (
+                        <Button
+                          key={`${preset.fast}-${preset.slow}-${preset.signal}`}
+                          type="button"
+                          size="sm"
+                          variant={active ? 'default' : 'outline'}
+                          disabled={isRunning}
+                          onClick={() => {
+                            setMacdSelection('preset');
+                            updateIndicatorPreference({
+                              macdFast: preset.fast,
+                              macdSlow: preset.slow,
+                              macdSignal: preset.signal,
+                            });
+                          }}
+                          className="h-7 text-xs"
+                        >
+                          {`MACD ${preset.fast}/${preset.slow}/${preset.signal}`}
+                        </Button>
+                      );
+                    })}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={macdSelection === 'custom' ? 'default' : 'outline'}
                       disabled={isRunning}
-                      value={indicatorPreferences.macdFast}
-                      onChange={(e) => handleMacdInputChange('macdFast', e.target.value)}
-                      className="w-24 h-7 px-2.5 text-xs border border-border rounded-md bg-background text-foreground"
-                      placeholder={t('strategy.macdFastPlaceholder')}
-                      aria-label="MACD fast"
-                    />
-                    <input
-                      type="number"
-                      min={1}
+                      onClick={() => setMacdSelection((v) => (v === 'custom' ? 'preset' : 'custom'))}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="w-3 h-3" />
+                      {t('strategy.addCustom')}
+                    </Button>
+                    {macdSelection === 'custom' && (
+                      <>
+                        <Input
+                          type="number"
+                          min={1}
+                          disabled={isRunning}
+                          value={indicatorPreferences.macdFast}
+                          onChange={(e) => handleMacdInputChange('macdFast', e.target.value)}
+                          className="w-24 h-7 text-xs"
+                          placeholder={t('strategy.macdFastPlaceholder')}
+                          aria-label="MACD fast"
+                        />
+                        <Input
+                          type="number"
+                          min={1}
+                          disabled={isRunning}
+                          value={indicatorPreferences.macdSlow}
+                          onChange={(e) => handleMacdInputChange('macdSlow', e.target.value)}
+                          className="w-24 h-7 text-xs"
+                          placeholder={t('strategy.macdSlowPlaceholder')}
+                          aria-label="MACD slow"
+                        />
+                        <Input
+                          type="number"
+                          min={1}
+                          disabled={isRunning}
+                          value={indicatorPreferences.macdSignal}
+                          onChange={(e) => handleMacdInputChange('macdSignal', e.target.value)}
+                          className="w-24 h-7 text-xs"
+                          placeholder={t('strategy.macdSignalPlaceholder')}
+                          aria-label="MACD signal"
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="window" className="space-y-3 mt-2">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.backtestWindow')}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {rangePresets.map((preset) => (
+                      <Button
+                        key={preset.key}
+                        type="button"
+                        size="sm"
+                        variant={backtestWindowPreset === preset.key ? "default" : "outline"}
+                        disabled={isRunning}
+                        onClick={() => onBacktestWindowPresetChange(preset.key)}
+                        className="h-7 text-xs"
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={backtestWindowPreset === "custom" ? "default" : "outline"}
                       disabled={isRunning}
-                      value={indicatorPreferences.macdSlow}
-                      onChange={(e) => handleMacdInputChange('macdSlow', e.target.value)}
-                      className="w-24 h-7 px-2.5 text-xs border border-border rounded-md bg-background text-foreground"
-                      placeholder={t('strategy.macdSlowPlaceholder')}
-                      aria-label="MACD slow"
-                    />
-                    <input
-                      type="number"
-                      min={1}
+                      onClick={() => onBacktestWindowPresetChange("custom")}
+                      className="h-7 text-xs"
+                    >
+                      {t('strategy.backtestPresetCustom')}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-muted-foreground">{t('strategy.startDate')}</p>
+                    <Input
+                      type="date"
+                      value={backtestStartDate}
                       disabled={isRunning}
-                      value={indicatorPreferences.macdSignal}
-                      onChange={(e) => handleMacdInputChange('macdSignal', e.target.value)}
-                      className="w-24 h-7 px-2.5 text-xs border border-border rounded-md bg-background text-foreground"
-                      placeholder={t('strategy.macdSignalPlaceholder')}
-                      aria-label="MACD signal"
+                      onChange={(e) => onBacktestDateRangeChange({ startDate: e.target.value, endDate: backtestEndDate })}
+                      className="h-8 text-xs"
                     />
-                  </>
-                )}
-              </div>
-            </div>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-muted-foreground">{t('strategy.endDate')}</p>
+                    <Input
+                      type="date"
+                      value={backtestEndDate}
+                      disabled={isRunning}
+                      onChange={(e) => onBacktestDateRangeChange({ startDate: backtestStartDate, endDate: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{formattedRangeSummary}</p>
+              </TabsContent>
+            </Tabs>
           </div>
         )}
       </div>

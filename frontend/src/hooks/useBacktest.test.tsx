@@ -131,4 +131,34 @@ describe("useBacktest", () => {
     expect(channelFactoryMock).toHaveBeenCalled();
     expect(api.getRunStatus).toHaveBeenCalledWith("run-123");
   });
+
+  it("passes selected backtest date range to createRun", async () => {
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: "token-1" } } });
+    vi.mocked(api.createRun).mockResolvedValue({ runId: "run-456" });
+    vi.mocked(api.getRunStatus).mockResolvedValue({
+      runId: "run-456",
+      state: "running",
+      steps: [{ key: "parse", title: "Parse Strategy", status: "running", durationMs: null, logs: [] }],
+      artifacts: { dsl: "", reportUrl: "", tradesCsvUrl: "" },
+    });
+
+    await act(async () => {
+      latestState.setBacktestDateRange({ startDate: "2025-01-01", endDate: "2025-06-30" });
+      latestState.setPrompt("Date range strategy");
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await latestState.runBacktest();
+    });
+    await flushMicrotasks();
+
+    expect(api.createRun).toHaveBeenCalledWith(
+      "Date range strategy",
+      expect.objectContaining({
+        startDate: "2025-01-01",
+        endDate: "2025-06-30",
+      })
+    );
+  });
 });

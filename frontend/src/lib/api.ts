@@ -291,9 +291,9 @@ export async function getRunReport(runId: string): Promise<RunReportResponse> {
 
   const equity = data.equity.map((p) => ({ timestamp: p.t, value: p.v }));
   const trades: TradeRecord[] = data.trades.map((t) => ({
-    timestamp: new Date(t.fill_time).toLocaleString(),
-    entryTime: new Date(t.decision_time).toLocaleString(),
-    exitTime: new Date(t.fill_time).toLocaleString(),
+    timestamp: t.fill_time,
+    entryTime: t.decision_time,
+    exitTime: t.fill_time,
     symbol: t.symbol,
     action: t.side,
     price: t.fill_price,

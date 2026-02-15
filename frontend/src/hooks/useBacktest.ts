@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as api from "@/lib/api";
+import { getPresetDateRange, isIsoDate, type BacktestWindowPreset } from "@/lib/date";
 import { supabase } from "@/lib/supabase";
 import type { RunStatusResponse, RunReportResponse, StepInfo } from "@/lib/api";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -25,8 +26,13 @@ export interface UseBacktestReturn {
   error: string | null;
   statusMessage: string;
   indicatorPreferences: api.IndicatorPreferences;
+  backtestWindowPreset: BacktestWindowPreset;
+  backtestStartDate: string;
+  backtestEndDate: string;
   setPrompt: (v: string) => void;
   setIndicatorPreferences: (next: api.IndicatorPreferences) => void;
+  setBacktestWindowPreset: (preset: BacktestWindowPreset) => void;
+  setBacktestDateRange: (next: { startDate: string; endDate: string }) => void;
   toggleFilter: (id: string) => void;
   runBacktest: () => void;
   revisePrompt: () => void;
@@ -74,6 +80,8 @@ export function useBacktest(): UseBacktestReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [indicatorPreferences, setIndicatorPreferences] = useState<api.IndicatorPreferences>(DEFAULT_INDICATOR_PREFERENCES);
+  const [backtestWindowPreset, setBacktestWindowPresetState] = useState<BacktestWindowPreset>("1y");
+  const [backtestDateRange, setBacktestDateRangeState] = useState(() => getPresetDateRange("1y"));
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeRef = useRef<RealtimeChannel | null>(null);
@@ -269,6 +277,18 @@ export function useBacktest(): UseBacktestReturn {
 
   const runBacktest = useCallback(async () => {
     if (!prompt.trim()) return;
+    if (!isIsoDate(backtestDateRange.startDate) || !isIsoDate(backtestDateRange.endDate)) {
+      setStatus("idle");
+      setError("Date range format must be YYYY-MM-DD.");
+      setStatusMessage("Invalid date range");
+      return;
+    }
+    if (backtestDateRange.startDate > backtestDateRange.endDate) {
+      setStatus("idle");
+      setError("Start date cannot be later than end date.");
+      setStatusMessage("Invalid date range");
+      return;
+    }
 
     const {
       data: { session },
@@ -297,6 +317,8 @@ export function useBacktest(): UseBacktestReturn {
       const { runId: newRunId } = await api.createRun(prompt, {
         ...options,
         mode: "BACKTEST_ONLY",
+        startDate: backtestDateRange.startDate,
+        endDate: backtestDateRange.endDate,
         llmIndicatorPreferences: indicatorPreferences,
       });
       setStatus("running");
@@ -312,7 +334,7 @@ export function useBacktest(): UseBacktestReturn {
       setError(msg);
       setStatusMessage("Failed to initialize");
     }
-  }, [filters, indicatorPreferences, prompt, startTracking]);
+  }, [backtestDateRange.endDate, backtestDateRange.startDate, filters, indicatorPreferences, prompt, startTracking]);
 
   const revisePrompt = useCallback(() => {
     stopPolling();
@@ -345,6 +367,18 @@ export function useBacktest(): UseBacktestReturn {
     setFilters((prev) => prev.map((f) => (f.id === id ? { ...f, active: !f.active } : f)));
   }, []);
 
+  const setBacktestWindowPreset = useCallback((preset: BacktestWindowPreset) => {
+    setBacktestWindowPresetState(preset);
+    if (preset !== "custom") {
+      setBacktestDateRangeState(getPresetDateRange(preset));
+    }
+  }, []);
+
+  const setBacktestDateRange = useCallback((next: { startDate: string; endDate: string }) => {
+    setBacktestWindowPresetState("custom");
+    setBacktestDateRangeState(next);
+  }, []);
+
   return {
     status,
     prompt,
@@ -358,8 +392,13 @@ export function useBacktest(): UseBacktestReturn {
     error,
     statusMessage,
     indicatorPreferences,
+    backtestWindowPreset,
+    backtestStartDate: backtestDateRange.startDate,
+    backtestEndDate: backtestDateRange.endDate,
     setPrompt,
     setIndicatorPreferences,
+    setBacktestWindowPreset,
+    setBacktestDateRange,
     toggleFilter,
     runBacktest,
     revisePrompt,
