@@ -26,6 +26,17 @@ describe("date utils", () => {
     vi.useRealTimers();
   });
 
+  it("builds all preset range from 2023-01-01 to current date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-15T10:00:00Z"));
+    const range = getPresetDateRange("all", new Date());
+    expect(range).toEqual({
+      startDate: "2023-01-01",
+      endDate: "2026-02-15",
+    });
+    vi.useRealTimers();
+  });
+
   it("formats Date to ISO date", () => {
     expect(toIsoDate(new Date(2026, 1, 5))).toBe("2026-02-05");
   });

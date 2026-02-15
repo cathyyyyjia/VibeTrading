@@ -2,11 +2,13 @@
 // WorkspaceStep - Individual step card in AI Workspace
 // ============================================================
 
-import { useState } from 'react';
-import { CheckCircle2, Loader2, Circle, AlertTriangle, AlertCircle, ChevronRight, Check, ChevronDown } from 'lucide-react';
-import type { StepInfo } from '@/lib/api';
+import { CheckCircle2, Loader2, Circle, AlertCircle } from "lucide-react";
+import { useI18n } from "@/contexts/I18nContext";
+import { formatDateByLocale, isIsoDate } from "@/lib/date";
+import type { StepInfo } from "@/lib/api";
 
-type StepStatus = StepInfo['status'];
+type StepStatus = StepInfo["status"];
+type SubtaskStatus = "queued" | "running" | "done" | "error";
 
 interface WorkspaceStepProps {
   step: StepInfo;
@@ -16,132 +18,24 @@ interface WorkspaceStepProps {
 
 function StatusIcon({ status }: { status: StepStatus }) {
   switch (status) {
-    case 'done':
+    case "done":
       return <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />;
-    case 'running':
+    case "running":
       return <Loader2 className="w-5 h-5 text-foreground animate-spin shrink-0" />;
-    case 'queued':
+    case "queued":
       return <Circle className="w-5 h-5 text-muted-foreground/30 shrink-0" />;
-    case 'warn':
-      return <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />;
-    case 'error':
+    case "warn":
+      return <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />;
+    case "error":
       return <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />;
   }
 }
 
-function DataSynthContent({ step }: { step: StepInfo }) {
-  const isDone = step.status === 'done';
-  const logs = step.logs.slice(-4);
-
-  return (
-    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-foreground">Market Data</span>
-        {(step.status === 'running' || isDone) && (
-          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
-            {isDone ? 'Ready' : 'Loading'}
-          </span>
-        )}
-      </div>
-      <div className="space-y-1.5">
-        {logs.length > 0 ? logs.map((log, i) => (
-          <div key={i} className="text-xs text-muted-foreground truncate" title={log}>
-            {log.replace('[INFO] ', '').replace('[DEBUG] ', '')}
-          </div>
-        )) : (
-          <div className="text-xs text-muted-foreground">No data logs available</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ParseContent({ step }: { step: StepInfo }) {
-  const latestLog = step.logs[step.logs.length - 1] || '';
-  const model = latestLog.match(/"model":"([^"]+)"/)?.[1];
-  const llmUsed = latestLog.match(/"llm_used":(true|false)/)?.[1];
-  const attempts = latestLog.match(/"llm_attempts":(\d+)/)?.[1];
-  const llmUsedLabel = llmUsed === 'true' ? 'Yes' : llmUsed === 'false' ? 'No' : '-';
-
-  return (
-    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
-      <div className="text-xs font-medium text-foreground mb-2">Parse Metadata</div>
-      <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">
-          LLM Model: <span className="text-foreground">{model || '-'}</span>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          LLM Driven: <span className="text-foreground">{llmUsedLabel}</span>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Attempts: <span className="text-foreground">{attempts || '1'}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BacktestContent({ progress, step }: { progress: number; step: StepInfo }) {
-  const isRunning = step.status === 'running';
-  const isDone = step.status === 'done';
-  const latestProgressLog = [...step.logs].reverse().find((log) => log.includes('Backtesting '));
-  const progressMatch = latestProgressLog?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
-  const displayProgress = isDone ? 100 : (progressMatch ? Number(progressMatch[4]) : progress);
-  const progressText = isDone
-    ? 'Completed'
-    : progressMatch?.[1]
-      ? `Running... processing ${progressMatch[1]}`
-      : 'Started';
-
-  return (
-    <div className="mt-2.5 space-y-2.5">
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs font-medium text-foreground">Backtest Engine</span>
-          <span className="text-xs font-mono text-muted-foreground">{displayProgress}%</span>
-        </div>
-        <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-foreground rounded-full transition-all duration-500 ease-out"
-            style={{ width: `${displayProgress}%` }}
-          />
-        </div>
-      </div>
-      <div className="flex items-center gap-2 text-xs">
-        {isRunning ? (
-          <ChevronRight className="w-3.5 h-3.5 text-foreground shrink-0" />
-        ) : (
-          <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-        )}
-        <span className="text-muted-foreground">{progressText}</span>
-      </div>
-    </div>
-  );
-}
-
-function ErrorLogs({ logs }: { logs: string[] }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="mt-2.5">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 text-xs font-medium text-red-500 hover:text-red-600 transition-colors"
-      >
-        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-        {expanded ? 'Hide error logs' : 'Show error logs'}
-      </button>
-      {expanded && (
-        <div className="mt-2 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-md p-3 space-y-1">
-          {logs.map((log, i) => (
-            <div key={i} className="text-[11px] font-mono text-red-700 dark:text-red-400">
-              {log}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function SubtaskStatusIcon({ status }: { status: SubtaskStatus }) {
+  if (status === "running") return <Loader2 className="w-3.5 h-3.5 text-foreground animate-spin shrink-0" />;
+  if (status === "done") return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+  if (status === "error") return <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />;
+  return <Circle className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />;
 }
 
 function normalizeLogMessage(log: string): string {
@@ -151,46 +45,95 @@ function normalizeLogMessage(log: string): string {
     .trim();
 }
 
-function buildSubtasks(step: StepInfo): Array<{ label: string; status: "queued" | "running" | "done" | "error" }> {
-  const labels = step.logs
-    .map(normalizeLogMessage)
-    .filter(Boolean);
-  if (labels.length === 0) return [];
+function localizeSubtask(raw: string, locale: "en" | "zh"): string {
+  const line = normalizeLogMessage(raw);
 
-  return labels.map((label, idx) => {
-    const last = idx === labels.length - 1;
-    if (step.status === "running") {
-      return { label, status: last ? "running" : "done" };
-    }
-    if (step.status === "done") {
-      return { label, status: "done" };
-    }
-    if (step.status === "error") {
-      return { label, status: last ? "error" : "done" };
-    }
-    return { label, status: "queued" };
-  });
+  const parseReady = line.match(/^Strategy ready \(LLM:\s*([^,]+),\s*attempts:\s*(\d+)\)$/i);
+  if (parseReady) {
+    const model = parseReady[1];
+    const attempts = parseReady[2];
+    return locale === "zh" ? `策略解析完成（模型：${model}，尝试：${attempts}次）` : `Strategy ready (LLM: ${model}, attempts: ${attempts})`;
+  }
+
+  if (/^Parsing strategy/i.test(line)) return locale === "zh" ? "正在使用大模型解析策略" : "Parsing strategy with LLM";
+  if (/^DSL artifact persisted$/i.test(line)) return locale === "zh" ? "DSL 已生成" : "DSL generated";
+  if (/^Input snapshot generated$/i.test(line)) return locale === "zh" ? "输入快照已生成" : "Input snapshot generated";
+  if (/^Building execution plan$/i.test(line)) return locale === "zh" ? "正在构建执行计划" : "Building execution plan";
+  if (/^ExecutionPlan compiled$/i.test(line)) return locale === "zh" ? "执行计划构建完成" : "Execution plan compiled";
+  if (/^Fetching minute data$/i.test(line)) return locale === "zh" ? "正在获取分钟级行情数据" : "Fetching minute market data";
+  if (/^Validating session coverage$/i.test(line)) return locale === "zh" ? "正在校验交易日覆盖" : "Validating session coverage";
+
+  const dataReady = line.match(/^Data ready \((\d{4}-\d{2}-\d{2}) -> (\d{4}-\d{2}-\d{2})\)$/i);
+  if (dataReady) {
+    const start = dataReady[1];
+    const end = dataReady[2];
+    if (locale === "zh") return `数据已就绪（${formatDateByLocale(start, "zh")} 至 ${formatDateByLocale(end, "zh")}）`;
+    return `Data ready (${start} -> ${end})`;
+  }
+
+  const backtest = line.match(/^Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)$/i);
+  if (backtest) {
+    const date = backtest[1];
+    const done = backtest[2];
+    const total = backtest[3];
+    const pct = backtest[4];
+    if (locale === "zh") return `回测进行中：${formatDateByLocale(date, "zh")}（${done}/${total}，${pct}%）`;
+    return `Backtesting ${date} (${done}/${total}, ${pct}%)`;
+  }
+
+  if (/^Running backtest$/i.test(line)) return locale === "zh" ? "正在运行回测引擎" : "Running backtest engine";
+  if (/^Backtest completed$/i.test(line)) return locale === "zh" ? "回测完成" : "Backtest completed";
+  if (/^Generating report$/i.test(line)) return locale === "zh" ? "正在生成报告" : "Generating report";
+  if (/^Report artifact persisted$/i.test(line)) return locale === "zh" ? "报告文件已保存" : "Report artifact persisted";
+  if (/^KPI snapshot generated$/i.test(line)) return locale === "zh" ? "KPI 快照已生成" : "KPI snapshot generated";
+  if (/^Report ready$/i.test(line)) return locale === "zh" ? "报告生成完成" : "Report ready";
+  if (/^Awaiting confirm$/i.test(line)) return locale === "zh" ? "等待部署确认" : "Awaiting deployment confirmation";
+
+  if (line.includes("failed") || line.includes("Unhandled")) {
+    return locale === "zh" ? "步骤执行失败" : "Step failed";
+  }
+
+  // Keep short and readable for unrecognized entries.
+  if (isIsoDate(line.slice(0, 10)) && locale === "zh") {
+    return line.replace(line.slice(0, 10), formatDateByLocale(line.slice(0, 10), "zh"));
+  }
+  return line;
 }
 
-function SubtaskStatusIcon({ status }: { status: "queued" | "running" | "done" | "error" }) {
-  if (status === "running") return <Loader2 className="w-3.5 h-3.5 text-foreground animate-spin shrink-0" />;
-  if (status === "done") return <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
-  if (status === "error") return <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />;
-  return <Circle className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />;
+function inferSubtaskStatus(step: StepInfo, label: string, index: number, total: number): SubtaskStatus {
+  const lower = label.toLowerCase();
+  if (lower.includes("failed") || lower.includes("error")) return "error";
+  if (step.status === "error" && index === total - 1) return "error";
+  if (step.status === "running" && index === total - 1) return "running";
+  if (step.status === "queued") return "queued";
+  if (step.status === "done") return "done";
+  return "done";
+}
+
+function buildSubtasks(step: StepInfo, locale: "en" | "zh"): Array<{ label: string; status: SubtaskStatus }> {
+  const labels = step.logs.map((log) => localizeSubtask(log, locale)).filter(Boolean);
+  if (labels.length === 0) return [];
+
+  return labels.map((label, idx) => ({
+    label,
+    status: inferSubtaskStatus(step, label, idx, labels.length),
+  }));
 }
 
 function SubtaskList({ step }: { step: StepInfo }) {
-  const tasks = buildSubtasks(step);
+  const { locale } = useI18n();
+  const tasks = buildSubtasks(step, locale);
   if (tasks.length === 0) return null;
 
   return (
     <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30">
-      <div className="text-xs font-medium text-foreground mb-2">Subtasks</div>
       <div className="space-y-1.5">
-        {tasks.slice(-5).map((task, idx) => (
+        {tasks.slice(-6).map((task, idx) => (
           <div key={`${task.label}-${idx}`} className="flex items-center gap-2">
             <SubtaskStatusIcon status={task.status} />
-            <span className="text-xs text-muted-foreground truncate" title={task.label}>{task.label}</span>
+            <span className="text-xs text-muted-foreground truncate" title={task.label}>
+              {task.label}
+            </span>
           </div>
         ))}
       </div>
@@ -198,43 +141,36 @@ function SubtaskList({ step }: { step: StepInfo }) {
   );
 }
 
-export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
-  const isActive = step.status === 'running' || step.status === 'done' || step.status === 'error';
-  const isParse = step.key === 'parse';
-  const isData = step.key === 'data';
-  const isBacktest = step.key === 'backtest';
+export default function WorkspaceStepCard({ step, isLast }: WorkspaceStepProps) {
+  const isActive = step.status === "running" || step.status === "done" || step.status === "error";
 
   const stepTitleMap: Record<string, string> = {
-    parse: 'PARSE',
-    plan: 'PLAN',
-    data: 'DATA',
-    backtest: 'BACKTEST',
-    report: 'REPORT',
-    deploy: 'DEPLOY',
+    parse: "PARSE",
+    plan: "PLAN",
+    data: "DATA",
+    backtest: "BACKTEST",
+    report: "REPORT",
+    deploy: "DEPLOY",
   };
 
   const statusLabelMap: Record<string, string> = {
-    running: 'Running',
-    done: 'Done',
-    error: 'Error',
+    running: "Running",
   };
 
   return (
     <div className="relative">
-      {!isLast && (
-        <div className="absolute left-[18px] top-[40px] bottom-[-12px] w-px bg-border" />
-      )}
+      {!isLast && <div className="absolute left-[18px] top-[40px] bottom-[-12px] w-px bg-border" />}
 
       <div
         className={`
           relative border rounded-lg p-4 transition-all duration-200
-          ${step.status === 'running'
-            ? 'border-foreground/20 bg-card shadow-md ring-1 ring-foreground/5'
-            : step.status === 'error'
-              ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20'
-              : step.status === 'done'
-                ? 'border-border bg-card'
-                : 'border-border/60 bg-card/60'
+          ${step.status === "running"
+            ? "border-foreground/20 bg-card shadow-md ring-1 ring-foreground/5"
+            : step.status === "error"
+              ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20"
+              : step.status === "done"
+                ? "border-border bg-card"
+                : "border-border/60 bg-card/60"
           }
         `}
       >
@@ -245,39 +181,16 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
               {stepTitleMap[step.key] || step.title}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            {step.durationMs !== null && step.status === 'done' && (
-              <span className="text-[11px] font-mono text-muted-foreground">{(step.durationMs / 1000).toFixed(1)}s</span>
-            )}
-            {step.status === 'running' && (
-              <span className="text-[10px] font-bold text-white bg-emerald-500 px-2 py-0.5 rounded-full">
-                {statusLabelMap.running}
-              </span>
-            )}
-          </div>
+          {step.status === "running" && (
+            <span className="text-[10px] font-bold text-white bg-emerald-500 px-2 py-0.5 rounded-full">
+              {statusLabelMap.running}
+            </span>
+          )}
         </div>
-
-        {isActive && step.logs.length > 0 && !isBacktest && !isParse && (
-          <p className="text-xs text-muted-foreground mt-1.5 ml-[30px]">{step.logs[0]}</p>
-        )}
 
         {isActive && (
           <div className="ml-[30px]">
-            {isParse && step.status !== 'error' && (
-              <ParseContent step={step} />
-            )}
-            {isData && step.status !== 'error' && (
-              <DataSynthContent step={step} />
-            )}
-            {isBacktest && step.status !== 'error' && (
-              <BacktestContent progress={progress} step={step} />
-            )}
-            {!isBacktest && step.status !== 'error' && (
-              <SubtaskList step={step} />
-            )}
-            {step.status === 'error' && (
-              <ErrorLogs logs={step.logs} />
-            )}
+            <SubtaskList step={step} />
           </div>
         )}
       </div>

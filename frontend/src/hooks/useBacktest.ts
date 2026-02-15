@@ -80,8 +80,8 @@ export function useBacktest(): UseBacktestReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [indicatorPreferences, setIndicatorPreferences] = useState<api.IndicatorPreferences>(DEFAULT_INDICATOR_PREFERENCES);
-  const [backtestWindowPreset, setBacktestWindowPresetState] = useState<BacktestWindowPreset>("1y");
-  const [backtestDateRange, setBacktestDateRangeState] = useState(() => getPresetDateRange("1y"));
+  const [backtestWindowPreset, setBacktestWindowPresetState] = useState<BacktestWindowPreset>("all");
+  const [backtestDateRange, setBacktestDateRangeState] = useState(() => getPresetDateRange("all"));
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeRef = useRef<RealtimeChannel | null>(null);

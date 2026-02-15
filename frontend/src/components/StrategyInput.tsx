@@ -69,6 +69,7 @@ export default function StrategyInput({
     { fast: 10, slow: 20, signal: 5 },
   ];
   const rangePresets: Array<{ key: Exclude<BacktestWindowPreset, "custom">; label: string }> = [
+    { key: 'all', label: t('strategy.backtestPresetAll') },
     { key: '1m', label: t('strategy.backtestPreset1m') },
     { key: '3m', label: t('strategy.backtestPreset3m') },
     { key: '6m', label: t('strategy.backtestPreset6m') },

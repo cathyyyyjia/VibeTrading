@@ -184,7 +184,7 @@ type V0BacktestReportResponse = {
   }>;
 };
 
-function formatStepLog(entry: V0LogEntry): string {
+function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string {
   const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   if (entry.msg === "Backtest progress" && entry.kv) {
     const sessionDate = typeof entry.kv.session_date === "string" ? entry.kv.session_date : "";
@@ -196,9 +196,29 @@ function formatStepLog(entry: V0LogEntry): string {
       return `${prefix}[${entry.level}] Backtesting ${sessionDate} (${processed}/${total}, ${pct}%)`;
     }
   }
-  const kv = entry.kv && Object.keys(entry.kv).length > 0 ? ` ${JSON.stringify(entry.kv)}` : "";
+  const kv = entry.kv && typeof entry.kv === "object" ? entry.kv : undefined;
+  if (stepId === "parse" && entry.msg === "Parsing strategy spec" && kv) {
+    const model = typeof kv.model === "string" ? kv.model : undefined;
+    const modelSuffix = model ? ` (LLM: ${model})` : "";
+    const prefix = ts ? `${ts} ` : "";
+    return `${prefix}[${entry.level}] Parsing strategy${modelSuffix}`;
+  }
+  if (stepId === "parse" && entry.msg === "StrategySpec ready" && kv) {
+    const model = typeof kv.model === "string" ? kv.model : "-";
+    const attemptsRaw = typeof kv.llm_attempts === "number" ? kv.llm_attempts : 1;
+    const attempts = Math.max(1, Math.floor(attemptsRaw));
+    const prefix = ts ? `${ts} ` : "";
+    return `${prefix}[${entry.level}] Strategy ready (LLM: ${model}, attempts: ${attempts})`;
+  }
+  if (stepId === "data" && entry.msg === "Data ready" && kv) {
+    const start = typeof kv.start_date === "string" ? kv.start_date : "";
+    const end = typeof kv.end_date === "string" ? kv.end_date : "";
+    const range = start && end ? ` (${start} -> ${end})` : "";
+    const prefix = ts ? `${ts} ` : "";
+    return `${prefix}[${entry.level}] Data ready${range}`;
+  }
   const prefix = ts ? `${ts} ` : "";
-  return `${prefix}[${entry.level}] ${entry.msg}${kv}`;
+  return `${prefix}[${entry.level}] ${entry.msg}`;
 }
 
 function mapV0StepToStepInfo(step: V0WorkspaceStep): StepInfo {
@@ -209,7 +229,7 @@ function mapV0StepToStepInfo(step: V0WorkspaceStep): StepInfo {
     FAILED: "error",
     SKIPPED: "queued",
   };
-  const logs = (step.logs || []).map(formatStepLog);
+  const logs = (step.logs || []).map((entry) => formatStepLog(step.id, entry));
   return { key: step.id, title: step.label, status: statusMap[step.state], durationMs: null, logs };
 }
 

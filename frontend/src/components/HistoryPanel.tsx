@@ -145,7 +145,7 @@ export default function HistoryPanel({ onSelectPrompt }: HistoryPanelProps) {
   }
 
   return (
-    <div className="border-t border-border pt-6 mt-6">
+    <div className="border-t border-border pt-8 mt-8">
       {/* Header */}
       <button
         onClick={() => setIsOpen(!isOpen)}

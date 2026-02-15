@@ -1,6 +1,6 @@
 import type { Locale } from "@/contexts/I18nContext";
 
-export type BacktestWindowPreset = "1m" | "3m" | "6m" | "1y" | "custom";
+export type BacktestWindowPreset = "all" | "1m" | "3m" | "6m" | "1y" | "custom";
 
 export interface BacktestDateRange {
   startDate: string;
@@ -39,6 +39,7 @@ function shiftByMonths(date: Date, months: number): Date {
 export function getPresetDateRange(preset: Exclude<BacktestWindowPreset, "custom">, baseDate: Date = new Date()): BacktestDateRange {
   const end = new Date(baseDate);
   let start = new Date(baseDate);
+  if (preset === "all") start = new Date(2023, 0, 1);
   if (preset === "1m") start = shiftByMonths(baseDate, -1);
   if (preset === "3m") start = shiftByMonths(baseDate, -3);
   if (preset === "6m") start = shiftByMonths(baseDate, -6);
