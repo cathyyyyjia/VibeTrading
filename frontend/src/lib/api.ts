@@ -1,4 +1,4 @@
-const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL ?? "";
+﻿const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL ?? "";
 import { supabase } from "@/lib/supabase";
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
@@ -189,40 +189,33 @@ type V0BacktestReportResponse = {
 };
 
 function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string {
-  const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   if (entry.msg === "Backtest progress" && entry.kv) {
     const sessionDate = typeof entry.kv.session_date === "string" ? entry.kv.session_date : "";
     const processed = typeof entry.kv.processed === "number" ? entry.kv.processed : undefined;
     const total = typeof entry.kv.total === "number" ? entry.kv.total : undefined;
     const pct = typeof entry.kv.pct === "number" ? entry.kv.pct : undefined;
-    const prefix = ts ? `${ts} ` : "";
     if (sessionDate && processed !== undefined && total !== undefined && pct !== undefined) {
-      return `${prefix}[${entry.level}] Backtesting ${sessionDate} (${processed}/${total}, ${pct}%)`;
+      return `[${entry.level}] Backtesting ${sessionDate} (${processed}/${total}, ${pct}%)`;
     }
   }
   const kv = entry.kv && typeof entry.kv === "object" ? entry.kv : undefined;
   if (stepId === "parse" && entry.msg === "Parsing strategy spec" && kv) {
     const model = typeof kv.model === "string" ? kv.model : undefined;
     const modelSuffix = model ? ` (LLM: ${model})` : "";
-    const prefix = ts ? `${ts} ` : "";
-    return `${prefix}[${entry.level}] Parsing strategy${modelSuffix}`;
+    return `[${entry.level}] Parsing strategy${modelSuffix}`;
   }
   if (stepId === "parse" && entry.msg === "StrategySpec ready" && kv) {
-    const model = typeof kv.model === "string" ? kv.model : "-";
     const attemptsRaw = typeof kv.llm_attempts === "number" ? kv.llm_attempts : 1;
     const attempts = Math.max(1, Math.floor(attemptsRaw));
-    const prefix = ts ? `${ts} ` : "";
-    return `${prefix}[${entry.level}] Strategy ready (LLM: ${model}, attempts: ${attempts})`;
+    return `[${entry.level}] Strategy ready (attempts: ${attempts})`;
   }
   if (stepId === "data" && entry.msg === "Data ready" && kv) {
     const start = typeof kv.start_date === "string" ? kv.start_date : "";
     const end = typeof kv.end_date === "string" ? kv.end_date : "";
-    const range = start && end ? ` (${start} -> ${end})` : "";
-    const prefix = ts ? `${ts} ` : "";
-    return `${prefix}[${entry.level}] Data ready${range}`;
+    const range = start && end ? ` (${start} - ${end})` : "";
+    return `[${entry.level}] Data ready${range}`;
   }
-  const prefix = ts ? `${ts} ` : "";
-  return `${prefix}[${entry.level}] ${entry.msg}`;
+  return `[${entry.level}] ${entry.msg}`;
 }
 
 function mapV0StepToStepInfo(step: V0WorkspaceStep): StepInfo {

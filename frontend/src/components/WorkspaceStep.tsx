@@ -1,8 +1,8 @@
-// ============================================================
+﻿// ============================================================
 // WorkspaceStep - Individual step card in AI Workspace
 // ============================================================
 
-import { CheckCircle2, Loader2, Circle, AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { useI18n } from "@/contexts/I18nContext";
 import { formatDateByLocale, isIsoDate } from "@/lib/date";
 import type { StepInfo } from "@/lib/api";
@@ -40,7 +40,9 @@ function SubtaskStatusIcon({ status }: { status: SubtaskStatus }) {
 
 function normalizeLogMessage(log: string): string {
   return log
-    .replace(/^\d{1,2}:\d{2}:\d{2}\s*/i, "")
+    // Strip optional time prefixes like "10:21:30 PM", "PM", "涓婂崍", "涓嬪崍"
+    .replace(/^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM|涓婂崍|涓嬪崍)?\s*/i, "")
+    .replace(/^(AM|PM|涓婂崍|涓嬪崍)\s*/i, "")
     .replace(/^\[(DEBUG|INFO|WARN|ERROR)\]\s*/i, "")
     .trim();
 }
@@ -48,14 +50,13 @@ function normalizeLogMessage(log: string): string {
 function localizeSubtask(raw: string, locale: "en" | "zh"): string {
   const line = normalizeLogMessage(raw);
 
-  const parseReady = line.match(/^Strategy ready \(LLM:\s*([^,]+),\s*attempts:\s*(\d+)\)$/i);
+  const parseReady = line.match(/^Strategy ready \((?:LLM:\s*[^,]+,\s*)?attempts:\s*(\d+)\)$/i);
   if (parseReady) {
-    const model = parseReady[1];
-    const attempts = parseReady[2];
-    return locale === "zh" ? `策略解析完成（模型：${model}，尝试：${attempts}次）` : `Strategy ready (LLM: ${model}, attempts: ${attempts})`;
+    const attempts = parseReady[1];
+    return locale === "zh" ? `策略解析完成（尝试：${attempts}次）` : `Strategy ready (attempts: ${attempts})`;
   }
 
-  if (/^Parsing strategy/i.test(line)) return locale === "zh" ? "正在使用大模型解析策略" : "Parsing strategy with LLM";
+  if (/^Parsing strategy/i.test(line)) return locale === "zh" ? "正在使用大语言模型解析策略" : "Parsing strategy with LLM";
   if (/^DSL artifact persisted$/i.test(line)) return locale === "zh" ? "DSL 已生成" : "DSL generated";
   if (/^Input snapshot generated$/i.test(line)) return locale === "zh" ? "输入快照已生成" : "Input snapshot generated";
   if (/^Building execution plan$/i.test(line)) return locale === "zh" ? "正在构建执行计划" : "Building execution plan";
@@ -63,22 +64,19 @@ function localizeSubtask(raw: string, locale: "en" | "zh"): string {
   if (/^Fetching minute data$/i.test(line)) return locale === "zh" ? "正在获取分钟级行情数据" : "Fetching minute market data";
   if (/^Validating session coverage$/i.test(line)) return locale === "zh" ? "正在校验交易日覆盖" : "Validating session coverage";
 
-  const dataReady = line.match(/^Data ready \((\d{4}-\d{2}-\d{2}) -> (\d{4}-\d{2}-\d{2})\)$/i);
+  const dataReady = line.match(/^Data ready \((\d{4}-\d{2}-\d{2})\s*(?:->|-)\s*(\d{4}-\d{2}-\d{2})\)$/i);
   if (dataReady) {
     const start = dataReady[1];
     const end = dataReady[2];
     if (locale === "zh") return `数据已就绪（${formatDateByLocale(start, "zh")} 至 ${formatDateByLocale(end, "zh")}）`;
-    return `Data ready (${start} -> ${end})`;
+    return `Data ready (${start} - ${end})`;
   }
 
   const backtest = line.match(/^Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)$/i);
   if (backtest) {
     const date = backtest[1];
-    const done = backtest[2];
-    const total = backtest[3];
-    const pct = backtest[4];
-    if (locale === "zh") return `回测进行中：${formatDateByLocale(date, "zh")}（${done}/${total}，${pct}%）`;
-    return `Backtesting ${date} (${done}/${total}, ${pct}%)`;
+    if (locale === "zh") return `回测进行中：${formatDateByLocale(date, "zh")}`;
+    return `Backtesting ${date}`;
   }
 
   if (/^Running backtest$/i.test(line)) return locale === "zh" ? "正在运行回测引擎" : "Running backtest engine";
@@ -93,7 +91,6 @@ function localizeSubtask(raw: string, locale: "en" | "zh"): string {
     return locale === "zh" ? "步骤执行失败" : "Step failed";
   }
 
-  // Keep short and readable for unrecognized entries.
   if (isIsoDate(line.slice(0, 10)) && locale === "zh") {
     return line.replace(line.slice(0, 10), formatDateByLocale(line.slice(0, 10), "zh"));
   }
@@ -141,7 +138,36 @@ function SubtaskList({ step }: { step: StepInfo }) {
   );
 }
 
-export default function WorkspaceStepCard({ step, isLast }: WorkspaceStepProps) {
+function BacktestProgress({ step, progress }: { step: StepInfo; progress: number }) {
+  const { locale } = useI18n();
+  const latest = [...step.logs].reverse().find((log) => log.includes("Backtesting "));
+  const m = latest?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
+  const pctFromLog = m ? Number(m[4]) : Number.NaN;
+  const pct = step.status === "done" ? 100 : Number.isFinite(pctFromLog) ? pctFromLog : progress;
+  const sessionDate = m?.[1];
+
+  const message = step.status === "done"
+    ? (locale === "zh" ? "回测完成" : "Backtest completed")
+    : sessionDate
+      ? (locale === "zh" ? `回测进行中：${formatDateByLocale(sessionDate, "zh")}` : `Backtesting ${sessionDate}`)
+      : (locale === "zh" ? "回测进行中" : "Backtesting");
+
+  const safePct = Math.max(0, Math.min(100, pct));
+
+  return (
+    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30 space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{message}</span>
+        <span className="font-mono text-foreground">{safePct.toFixed(1)}%</span>
+      </div>
+      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+        <div className="h-full bg-foreground rounded-full transition-all duration-500 ease-out" style={{ width: `${safePct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
   const { t } = useI18n();
   const isActive = step.status === "running" || step.status === "done" || step.status === "error";
 
@@ -191,6 +217,9 @@ export default function WorkspaceStepCard({ step, isLast }: WorkspaceStepProps) 
 
         {isActive && (
           <div className="ml-[30px]">
+            {step.key === "backtest" && step.status !== "error" && (
+              <BacktestProgress step={step} progress={progress} />
+            )}
             <SubtaskList step={step} />
           </div>
         )}

@@ -29,15 +29,7 @@ interface StrategyInputProps {
 
 const EXAMPLE_PROMPTS = [
   {
-    labelKey: 'example.trend',
-    prompt: 'Buy BTC when the 50-day MA crosses above the 200-day MA, with RSI below 30 as an entry filter. Use 5% stop-loss and 15% take-profit.',
-  },
-  {
-    labelKey: 'example.meanReversion',
-    prompt: 'Buy ETH when price drops 2 standard deviations below the 20-day Bollinger Band, sell when it returns to the mean. Position size 25% of portfolio.',
-  },
-  {
-    labelKey: 'example.multiTimeframe',
+    labelKey: 'strategy.examplePrompt',
     prompt: 'Sell 25% TQQQ when QQQ has a 4H MACD death cross and at 2 minutes before close it\'s still below the 5-day MA.',
   },
 ];
@@ -125,6 +117,14 @@ export default function StrategyInput({
             ))}
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => onPromptChange('')}
+          disabled={isRunning || !prompt.trim()}
+          className="flex items-center gap-2 px-4 py-2.5 border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted/40 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {t('strategy.clearPrompt')}
+        </button>
         {/* Run Backtest Button */}
         <button
           onClick={onRunBacktest}
