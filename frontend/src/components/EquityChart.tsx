@@ -5,7 +5,6 @@
   Line,
   ReferenceArea,
   ResponsiveContainer,
-  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -31,12 +30,6 @@ type ChartRow = {
   buyCount: number;
   sellCount: number;
   inPosition: boolean;
-};
-
-type TradeMarker = {
-  ts: number;
-  markerY: number;
-  action: "BUY" | "SELL";
 };
 
 type PositionBand = {
@@ -96,13 +89,13 @@ function SkeletonChart() {
 
 function BuyDot(props: any) {
   const { cx, cy, payload } = props;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || payload?.action !== "BUY") return null;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.buyCount) return null;
   return <circle cx={cx} cy={cy} r={3.5} fill={BUY_COLOR} stroke="white" strokeWidth={1} />;
 }
 
 function SellDot(props: any) {
   const { cx, cy, payload } = props;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || payload?.action !== "SELL") return null;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.sellCount) return null;
   return <circle cx={cx} cy={cy} r={3.5} fill={SELL_COLOR} stroke="white" strokeWidth={1} />;
 }
 
@@ -111,8 +104,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  const { rows, tradeMarkers } = useMemo(() => {
-    if (!data || data.length === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
+  const rows = useMemo(() => {
+    if (!data || data.length === 0) return [] as ChartRow[];
 
     const equityByDay = new Map<string, number>();
     for (const point of data) {
@@ -133,23 +126,23 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     }
 
     const sortedDays = Array.from(equityByDay.keys()).sort();
-    if (sortedDays.length === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
+    if (sortedDays.length === 0) return [] as ChartRow[];
 
     const base = Number(equityByDay.get(sortedDays[0]) ?? 0);
-    if (!Number.isFinite(base) || base === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
+    if (!Number.isFinite(base) || base === 0) return [] as ChartRow[];
 
     const hasAnyBuy = (trades || []).some((t) => String(t.action || "").toUpperCase().includes("BUY"));
     const hasAnySell = (trades || []).some((t) => String(t.action || "").toUpperCase().includes("SELL"));
     let position = !hasAnyBuy && hasAnySell ? 1 : 0;
-    const built: ChartRow[] = [];
 
+    const built: ChartRow[] = [];
     for (const day of sortedDays) {
       const equity = Number(equityByDay.get(day) ?? 0);
       const returnPct = ((equity / base) - 1) * 100;
       const dayTrades = tradesByDay.get(day) ?? [];
+
       let buyCount = 0;
       let sellCount = 0;
-
       for (const trade of dayTrades) {
         const action = String(trade.action || "").toUpperCase();
         if (action.includes("BUY")) {
@@ -172,27 +165,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       });
     }
 
-    const sampledRows = built;
-    const sampledDays = new Set(sampledRows.map((r) => r.day));
-    const rowByDay = new Map(sampledRows.map((r) => [r.day, r]));
-
-    const markers: TradeMarker[] = [];
-    for (const trade of trades || []) {
-      const tsRaw = trade.timestamp || trade.entryTime || "";
-      const day = toDay(tsRaw);
-      if (!day || !sampledDays.has(day)) continue;
-      const row = rowByDay.get(day);
-      if (!row) continue;
-      const action = String(trade.action || "").toUpperCase();
-      const markerTs = row.ts;
-      if (action.includes("BUY")) {
-        markers.push({ ts: markerTs, markerY: row.returnPct, action: "BUY" });
-      } else if (action.includes("SELL")) {
-        markers.push({ ts: markerTs, markerY: row.returnPct, action: "SELL" });
-      }
-    }
-
-    return { rows: sampledRows, tradeMarkers: markers };
+    return built;
   }, [data, trades]);
 
   if (loading) return <SkeletonChart />;
@@ -202,17 +175,16 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const yValues = rows.map((d) => d.returnPct);
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
-  const buyMarkers = tradeMarkers.filter((m) => m.action === "BUY");
-  const sellMarkers = tradeMarkers.filter((m) => m.action === "SELL");
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
 
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
-    const main = payload.find((p: any) => p?.dataKey === "returnPct")?.payload ?? payload[0]?.payload;
-    const row = main as ChartRow | undefined;
+    const lineEntry = payload.find((p: any) => p?.dataKey === "returnPct" && p?.value !== undefined);
+    const row = (lineEntry?.payload ?? payload[0]?.payload) as ChartRow | undefined;
     if (!row) return null;
+
     return (
       <div className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm">
         <div className="font-medium">{formatDateByLocale(row.day, locale)}</div>
@@ -247,7 +219,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               dataKey="ts"
               type="number"
               domain={["dataMin", "dataMax"]}
-              padding={{ left: 10, right: 6 }}
+              padding={{ left: 0, right: 0 }}
               tick={{ fontSize: 10, fill: axisColor }}
               tickLine={false}
               axisLine={false}
@@ -283,11 +255,23 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               stroke="none"
               fill={isDark ? "rgba(148,163,184,0.18)" : "rgba(148,163,184,0.14)"}
               isAnimationActive={false}
+              tooltipType="none"
             />
-            <Line type="monotone" dataKey="returnPct" stroke={CURVE_COLOR} strokeWidth={1.9} dot={false} activeDot={false} isAnimationActive={false} />
 
-            <Scatter data={buyMarkers} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} tooltipType="none" />
-            <Scatter data={sellMarkers} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} tooltipType="none" />
+            <Line
+              type="monotone"
+              dataKey="returnPct"
+              stroke={CURVE_COLOR}
+              strokeWidth={1.9}
+              dot={(props: any) => (
+                <g>
+                  <BuyDot {...props} />
+                  <SellDot {...props} />
+                </g>
+              )}
+              activeDot={false}
+              isAnimationActive={false}
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
