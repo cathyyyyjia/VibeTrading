@@ -1,7 +1,9 @@
 ﻿import {
+  Area,
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
   ResponsiveContainer,
   Scatter,
   Tooltip,
@@ -28,11 +30,26 @@ type ChartRow = {
   returnPct: number;
   buyCount: number;
   sellCount: number;
+  inPosition: boolean;
+};
+
+type TradeMarker = {
+  ts: number;
+  markerY: number;
+  action: "BUY" | "SELL";
+};
+
+type PositionBand = {
+  x1: number;
+  x2: number;
+  positive: boolean;
 };
 
 const CURVE_COLOR = "#111111";
 const BUY_COLOR = "#16a34a";
 const SELL_COLOR = "#dc2626";
+const HOLD_UP = "rgba(22, 163, 74, 0.10)";
+const HOLD_DOWN = "rgba(220, 38, 38, 0.08)";
 
 function formatMoney(value: number): string {
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -61,6 +78,25 @@ function downsampleRows(rows: ChartRow[], maxPoints: number): ChartRow[] {
   return Array.from(keep).sort((a, b) => a - b).map((idx) => rows[idx]);
 }
 
+function buildPositionBands(rows: ChartRow[]): PositionBand[] {
+  const bands: PositionBand[] = [];
+  let startIdx: number | null = null;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (row.inPosition && startIdx === null) startIdx = i;
+    const isLast = i === rows.length - 1;
+    const closesBand = !row.inPosition || isLast;
+    if (startIdx !== null && closesBand) {
+      const endIdx = row.inPosition && isLast ? i : Math.max(startIdx, i - 1);
+      const start = rows[startIdx];
+      const end = rows[endIdx];
+      bands.push({ x1: start.ts, x2: end.ts, positive: end.returnPct >= start.returnPct });
+      startIdx = null;
+    }
+  }
+  return bands;
+}
+
 function SkeletonChart() {
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
@@ -71,13 +107,13 @@ function SkeletonChart() {
 
 function BuyDot(props: any) {
   const { cx, cy, payload } = props;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.buyCount) return null;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || payload?.action !== "BUY") return null;
   return <circle cx={cx} cy={cy} r={3.5} fill={BUY_COLOR} stroke="white" strokeWidth={1} />;
 }
 
 function SellDot(props: any) {
   const { cx, cy, payload } = props;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.sellCount) return null;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || payload?.action !== "SELL") return null;
   return <circle cx={cx} cy={cy} r={3.5} fill={SELL_COLOR} stroke="white" strokeWidth={1} />;
 }
 
@@ -86,8 +122,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  const rows = useMemo<ChartRow[]>(() => {
-    if (!data || data.length === 0) return [];
+  const { rows, tradeMarkers } = useMemo(() => {
+    if (!data || data.length === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
 
     const equityByDay = new Map<string, number>();
     for (const point of data) {
@@ -97,55 +133,96 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       if (day && Number.isFinite(val)) equityByDay.set(day, val);
     }
 
-    const tradesByDay = new Map<string, { buyCount: number; sellCount: number }>();
+    const tradesByDay = new Map<string, TradeRecord[]>();
     for (const trade of trades || []) {
-      const day = toDay(trade.timestamp || trade.entryTime || "");
+      const ts = trade.timestamp || trade.entryTime || "";
+      const day = toDay(ts);
       if (!day) continue;
-      const current = tradesByDay.get(day) ?? { buyCount: 0, sellCount: 0 };
-      const action = String(trade.action || "").toUpperCase();
-      if (action.includes("BUY")) current.buyCount += 1;
-      if (action.includes("SELL")) current.sellCount += 1;
-      tradesByDay.set(day, current);
+      const arr = tradesByDay.get(day) ?? [];
+      arr.push(trade);
+      tradesByDay.set(day, arr);
     }
 
     const sortedDays = Array.from(equityByDay.keys()).sort();
-    if (sortedDays.length === 0) return [];
+    if (sortedDays.length === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
 
     const base = Number(equityByDay.get(sortedDays[0]) ?? 0);
-    if (!Number.isFinite(base) || base === 0) return [];
+    if (!Number.isFinite(base) || base === 0) return { rows: [] as ChartRow[], tradeMarkers: [] as TradeMarker[] };
 
-    const built: ChartRow[] = sortedDays.map((day) => {
+    const hasAnyBuy = (trades || []).some((t) => String(t.action || "").toUpperCase().includes("BUY"));
+    const hasAnySell = (trades || []).some((t) => String(t.action || "").toUpperCase().includes("SELL"));
+    let position = !hasAnyBuy && hasAnySell ? 1 : 0;
+    const built: ChartRow[] = [];
+
+    for (const day of sortedDays) {
       const equity = Number(equityByDay.get(day) ?? 0);
       const returnPct = ((equity / base) - 1) * 100;
-      const counts = tradesByDay.get(day) ?? { buyCount: 0, sellCount: 0 };
-      return {
+      const dayTrades = tradesByDay.get(day) ?? [];
+      let buyCount = 0;
+      let sellCount = 0;
+
+      for (const trade of dayTrades) {
+        const action = String(trade.action || "").toUpperCase();
+        if (action.includes("BUY")) {
+          buyCount += 1;
+          position += 1;
+        } else if (action.includes("SELL")) {
+          sellCount += 1;
+          position = Math.max(0, position - 1);
+        }
+      }
+
+      built.push({
         ts: toTs(day),
         day,
         equity,
         returnPct,
-        buyCount: counts.buyCount,
-        sellCount: counts.sellCount,
-      };
-    });
+        buyCount,
+        sellCount,
+        inPosition: position > 0,
+      });
+    }
 
-    return downsampleRows(built, 1200);
+    const sampledRows = downsampleRows(built, 1200);
+    const sampledDays = new Set(sampledRows.map((r) => r.day));
+    const rowByDay = new Map(sampledRows.map((r) => [r.day, r]));
+
+    const markers: TradeMarker[] = [];
+    for (const trade of trades || []) {
+      const tsRaw = trade.timestamp || trade.entryTime || "";
+      const day = toDay(tsRaw);
+      if (!day || !sampledDays.has(day)) continue;
+      const row = rowByDay.get(day);
+      if (!row) continue;
+      const action = String(trade.action || "").toUpperCase();
+      const markerTs = Number.isFinite(new Date(tsRaw).getTime()) ? new Date(tsRaw).getTime() : row.ts;
+      if (action.includes("BUY")) {
+        markers.push({ ts: markerTs, markerY: row.returnPct, action: "BUY" });
+      } else if (action.includes("SELL")) {
+        markers.push({ ts: markerTs, markerY: row.returnPct, action: "SELL" });
+      }
+    }
+
+    return { rows: sampledRows, tradeMarkers: markers };
   }, [data, trades]);
 
   if (loading) return <SkeletonChart />;
   if (rows.length === 0) return null;
 
+  const bands = buildPositionBands(rows);
   const yValues = rows.map((d) => d.returnPct);
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
-  const tradeBuys = rows.filter((d) => d.buyCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
-  const tradeSells = rows.filter((d) => d.sellCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
+  const buyMarkers = tradeMarkers.filter((m) => m.action === "BUY");
+  const sellMarkers = tradeMarkers.filter((m) => m.action === "SELL");
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
 
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
-    const row = payload[0]?.payload as ChartRow | undefined;
+    const main = payload.find((p: any) => p?.dataKey === "returnPct")?.payload ?? payload[0]?.payload;
+    const row = main as ChartRow | undefined;
     if (!row) return null;
     return (
       <div className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm">
@@ -159,16 +236,29 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   };
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card">
+    <div className="border border-border rounded-lg p-4 bg-card space-y-3">
       <div className="relative h-[320px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 8, right: 10, left: 2, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+
+            {bands.map((band, idx) => (
+              <ReferenceArea
+                key={`${band.x1}-${band.x2}-${idx}`}
+                x1={band.x1}
+                x2={band.x2}
+                y1={Math.min(yMin - 0.5, -0.5)}
+                y2={Math.max(yMax + 0.5, 0.5)}
+                fill={band.positive ? HOLD_UP : HOLD_DOWN}
+                strokeOpacity={0}
+              />
+            ))}
+
             <XAxis
               dataKey="ts"
               type="number"
               domain={["dataMin", "dataMax"]}
-              padding={{ left: 6, right: 6 }}
+              padding={{ left: 10, right: 6 }}
               tick={{ fontSize: 10, fill: axisColor }}
               tickLine={false}
               axisLine={false}
@@ -197,20 +287,28 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               content={renderTooltip}
             />
 
-            <Line
+            <Area
               type="monotone"
               dataKey="returnPct"
-              stroke={CURVE_COLOR}
-              strokeWidth={1.9}
-              dot={false}
-              activeDot={false}
+              baseValue={Math.min(yMin - 0.5, -0.5)}
+              stroke="none"
+              fill={isDark ? "rgba(148,163,184,0.18)" : "rgba(148,163,184,0.14)"}
               isAnimationActive={false}
             />
+            <Line type="monotone" dataKey="returnPct" stroke={CURVE_COLOR} strokeWidth={1.9} dot={false} activeDot={false} isAnimationActive={false} />
 
-            <Scatter data={tradeBuys} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} />
-            <Scatter data={tradeSells} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} />
+            <Scatter data={buyMarkers} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} />
+            <Scatter data={sellMarkers} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-[2px] rounded-full bg-black" />{locale === "zh" ? "策略累计收益" : "Strategy Return"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: BUY_COLOR }} />{locale === "zh" ? "买点" : "Buy"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: SELL_COLOR }} />{locale === "zh" ? "卖点" : "Sell"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: HOLD_UP }} />{locale === "zh" ? "持仓正收益区间" : "Positive holding interval"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: HOLD_DOWN }} />{locale === "zh" ? "持仓负收益区间" : "Negative holding interval"}</span>
       </div>
     </div>
   );
