@@ -15,7 +15,6 @@ interface SimulationResultProps {
   report: RunReportResponse | null;
   status: AppStatus;
   runId: string | null;
-  prompt: string;
   indicatorPreferences: IndicatorPreferences;
   backtestStartDate: string;
   backtestEndDate: string;
@@ -25,7 +24,6 @@ export default function SimulationResult({
   report,
   status,
   runId,
-  prompt,
   indicatorPreferences,
   backtestStartDate,
   backtestEndDate,
@@ -33,12 +31,6 @@ export default function SimulationResult({
   const { t, locale } = useI18n();
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
-  const statusLabel =
-    status === "completed"
-      ? t("history.completed")
-      : status === "failed"
-        ? t("history.failed")
-        : t("workspace.step.running");
   const range = `${backtestStartDate} - ${backtestEndDate}`;
 
   if (!showResult) return null;
@@ -62,12 +54,6 @@ export default function SimulationResult({
       {/* Run Metadata */}
       <div className="border border-border rounded-lg bg-card p-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-          <div className="text-muted-foreground">
-            {locale === "zh" ? "策略" : "Strategy"}: <span className="text-foreground">{prompt || "-"}</span>
-          </div>
-          <div className="text-muted-foreground">
-            {locale === "zh" ? "状态" : "Status"}: <span className="text-foreground">{statusLabel}</span>
-          </div>
           <div className="text-muted-foreground">
             MA/MACD: <span className="text-foreground">{`MA${indicatorPreferences.maWindowDays}, MACD ${indicatorPreferences.macdFast}/${indicatorPreferences.macdSlow}/${indicatorPreferences.macdSignal}`}</span>
           </div>

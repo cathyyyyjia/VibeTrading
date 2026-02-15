@@ -315,12 +315,6 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                     <div className="border border-border rounded-lg bg-card p-3">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                         <div className="text-muted-foreground">
-                          {locale === "zh" ? "策略" : "Strategy"}: <span className="text-foreground">{entry.prompt || "-"}</span>
-                        </div>
-                        <div className="text-muted-foreground">
-                          {locale === "zh" ? "状态" : "Status"}: <span className="text-foreground">{entry.state === 'completed' ? t('history.completed') : t('history.failed')}</span>
-                        </div>
-                        <div className="text-muted-foreground">
                           MA/MACD: <span className="text-foreground">
                             {runMeta?.maWindowDays ? `MA${runMeta.maWindowDays}` : "MA-"}
                             {", "}

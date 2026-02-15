@@ -84,7 +84,6 @@ export default function StrategyDesigner({
         report={report}
         status={status}
         runId={runId}
-        prompt={prompt}
         indicatorPreferences={indicatorPreferences}
         backtestStartDate={backtestStartDate}
         backtestEndDate={backtestEndDate}
