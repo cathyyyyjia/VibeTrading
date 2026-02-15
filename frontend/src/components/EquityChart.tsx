@@ -234,7 +234,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     return downsampleRows(built, 900);
   }, [data, trades]);
 
-  const positionBands = useMemo(() => buildPositionBands(rows), [rows]);
   const activeInfo = pinnedRow ?? hoverRow;
   const activePos = pinnedPos ?? hoverPos;
 
@@ -267,37 +266,44 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   }, [rows.length, windowPreset]);
 
   useEffect(() => {
-    if (rows.length === 0) {
+    if (rows.length <= 1) {
       setBrushRange({ start: 0, end: 0 });
       return;
     }
     const last = rows.length - 1;
     const points = presetPoints[windowPreset];
     if (!Number.isFinite(points) || rows.length <= points) {
-      setBrushRange({ start: 0, end: last });
+      setBrushRange({ start: 0, end: Math.max(1, last) });
       return;
     }
-    const start = Math.max(0, rows.length - points);
-    const end = Math.max(start, last);
+    const start = Math.max(0, Math.min(rows.length - points, last - 1));
+    const end = Math.max(start + 1, last);
     setBrushRange({ start, end });
   }, [rows.length, windowPreset]);
 
   if (loading) return <SkeletonChart />;
   if (rows.length === 0) return null;
 
-  const tradeBuys = rows.filter((d) => d.buyCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
-  const tradeSells = rows.filter((d) => d.sellCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
-  const returnValues = rows.map((d) => d.returnPct);
-  const drawdownValues = rows.map((d) => d.drawdownPct);
+  const gridColor = isDark ? "#27272a" : "#eceff3";
+  const axisColor = isDark ? "#a1a1aa" : "#64748b";
+  const maxIndex = rows.length - 1;
+  const hasBrush = maxIndex > 0;
+  const safeBrushStart = !hasBrush ? 0 : Math.min(Math.max(0, brushRange.start), maxIndex - 1);
+  const safeBrushEnd = !hasBrush ? 0 : Math.min(Math.max(safeBrushStart + 1, brushRange.end), maxIndex);
+  const visibleRows = hasBrush ? rows.slice(safeBrushStart, safeBrushEnd + 1) : rows;
+  const visibleBands = useMemo(() => buildPositionBands(visibleRows), [visibleRows]);
+  const visibleTsStart = visibleRows[0]?.ts ?? null;
+  const visibleTsEnd = visibleRows[visibleRows.length - 1]?.ts ?? null;
+  const activeInfoInView = !!activeInfo && visibleTsStart !== null && visibleTsEnd !== null && activeInfo.ts >= visibleTsStart && activeInfo.ts <= visibleTsEnd;
+
+  const tradeBuys = visibleRows.filter((d) => d.buyCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
+  const tradeSells = visibleRows.filter((d) => d.sellCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
+  const returnValues = visibleRows.map((d) => d.returnPct);
+  const drawdownValues = visibleRows.map((d) => d.drawdownPct);
   const minReturn = Math.min(...returnValues);
   const maxReturn = Math.max(...returnValues);
   const minDrawdown = Math.min(...drawdownValues);
 
-  const gridColor = isDark ? "#27272a" : "#eceff3";
-  const axisColor = isDark ? "#a1a1aa" : "#64748b";
-  const maxIndex = rows.length - 1;
-  const safeBrushStart = maxIndex < 0 ? 0 : Math.min(Math.max(0, brushRange.start), maxIndex);
-  const safeBrushEnd = maxIndex < 0 ? 0 : Math.min(Math.max(safeBrushStart, brushRange.end), maxIndex);
   const presetButtons: Array<{ key: WindowPreset; label: string }> = [
     { key: "3m", label: t("strategy.backtestPreset3m") },
     { key: "6m", label: t("strategy.backtestPreset6m") },
@@ -335,9 +341,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
         <div className="relative h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={rows}
+              data={visibleRows}
               syncId="bt-chart"
-              margin={{ top: 6, right: 10, left: 0, bottom: 0 }}
+              margin={{ top: 6, right: 10, left: 2, bottom: 0 }}
               onMouseMove={(state: any) => {
                 if (pinnedRow) return;
                 const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
@@ -373,7 +379,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-              {positionBands.map((band, idx) => (
+              {visibleBands.map((band, idx) => (
                 <ReferenceArea
                   key={`${band.x1}-${band.x2}-${idx}`}
                   x1={band.x1}
@@ -388,6 +394,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 dataKey="ts"
                 type="number"
                 domain={["dataMin", "dataMax"]}
+                padding={{ left: 6, right: 6 }}
                 tick={{ fontSize: 10, fill: axisColor }}
                 tickLine={false}
                 axisLine={false}
@@ -410,9 +417,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                   fontSize: 10,
                 }}
               />
-              {activeInfo ? (
+              {activeInfoInView ? (
                 <ReferenceLine
-                  x={activeInfo.ts}
+                  x={activeInfo!.ts}
                   stroke={isDark ? "#71717a" : "#94a3b8"}
                   strokeDasharray="3 3"
                   strokeOpacity={0.75}
@@ -480,7 +487,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               />
             </ComposedChart>
           </ResponsiveContainer>
-          {activeInfo && activePos && (
+          {activeInfo && activePos && activeInfoInView && (
             <div
               className="pointer-events-none absolute z-20 flex flex-col gap-2"
               style={{
@@ -527,7 +534,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       <div>
         <div className="h-[82px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+            <AreaChart data={visibleRows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
               <XAxis dataKey="ts" type="number" domain={["dataMin", "dataMax"]} hide />
               <YAxis
@@ -546,9 +553,9 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                   fontSize: 10,
                 }}
               />
-              {activeInfo ? (
+              {activeInfoInView ? (
                 <ReferenceLine
-                  x={activeInfo.ts}
+                  x={activeInfo!.ts}
                   stroke={isDark ? "#71717a" : "#94a3b8"}
                   strokeDasharray="3 3"
                   strokeOpacity={0.75}
@@ -573,22 +580,24 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
             />
             <YAxis hide />
             <Area type="monotone" dataKey="returnPct" stroke="#94a3b8" strokeWidth={1} fill="rgba(148, 163, 184, 0.12)" />
-            <Brush
-              dataKey="ts"
-              height={24}
-              stroke={isDark ? "#71717a" : "#94a3b8"}
-              travellerWidth={8}
-              startIndex={safeBrushStart}
-              endIndex={safeBrushEnd}
-              onChange={(next) => {
-                const nextStartRaw = typeof next?.startIndex === "number" ? next.startIndex : safeBrushStart;
-                const nextEndRaw = typeof next?.endIndex === "number" ? next.endIndex : safeBrushEnd;
-                const start = maxIndex < 0 ? 0 : Math.min(Math.max(0, nextStartRaw), maxIndex);
-                const end = maxIndex < 0 ? 0 : Math.min(Math.max(start, nextEndRaw), maxIndex);
-                setBrushRange({ start, end });
-              }}
-              tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
-            />
+            {hasBrush ? (
+              <Brush
+                dataKey="ts"
+                height={24}
+                stroke={isDark ? "#71717a" : "#94a3b8"}
+                travellerWidth={8}
+                startIndex={safeBrushStart}
+                endIndex={safeBrushEnd}
+                onChange={(next) => {
+                  const nextStartRaw = typeof next?.startIndex === "number" ? next.startIndex : safeBrushStart;
+                  const nextEndRaw = typeof next?.endIndex === "number" ? next.endIndex : safeBrushEnd;
+                  const start = Math.min(Math.max(0, nextStartRaw), maxIndex - 1);
+                  const end = Math.min(Math.max(start + 1, nextEndRaw), maxIndex);
+                  setBrushRange({ start, end });
+                }}
+                tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
+              />
+            ) : null}
           </AreaChart>
         </ResponsiveContainer>
       </div>
