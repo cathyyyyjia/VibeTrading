@@ -37,7 +37,7 @@ const en: Record<string, string> = {
 
   "strategy.title": "Strategy Designer",
   "strategy.subtitle": "Define your trading algorithm using natural language.",
-  "strategy.placeholder": "e.g., Buy BTC when the 50-day MA crosses above the 200-day MA...",
+  "strategy.placeholder": "说说策略想法...",
   "strategy.examplePrompt": "4H MACD + MA Sell",
   "strategy.clearPrompt": "Clear",
   "strategy.runBacktest": "Run Backtest",
@@ -213,7 +213,7 @@ const zh: Record<string, string> = {
 
   "strategy.title": "策略设计器",
   "strategy.subtitle": "使用自然语言定义你的交易算法。",
-  "strategy.placeholder": "例如：当 50 日均线上穿 200 日均线时买入 BTC...",
+  "strategy.placeholder": "说说策略想法...",
   "strategy.examplePrompt": "4H MACD + MA 卖出示例",
   "strategy.clearPrompt": "清空",
   "strategy.runBacktest": "运行回测",

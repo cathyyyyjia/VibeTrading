@@ -30,7 +30,10 @@ interface StrategyInputProps {
 const EXAMPLE_PROMPTS = [
   {
     labelKey: 'strategy.examplePrompt',
-    prompt: 'Sell 25% TQQQ when QQQ has a 4H MACD death cross and at 2 minutes before close it\'s still below the 5-day MA.',
+    promptEn:
+      'On QQQ / NDX, if a 4H MACD death cross is confirmed and 2 minutes before close price is still below the broken 5-day MA (still under MA5), then sell part of TQQQ and treat the rebound as finished.',
+    promptZh:
+      '在 QQQ / NDX 上确认 4小时 MACD 死叉，且在收盘前 2 分钟仍未收回“跌破的 5日 MA”（仍在 MA5 下方），则卖出一部分 TQQQ，认为反弹结束。',
   },
 ];
 
@@ -108,7 +111,7 @@ export default function StrategyInput({
             {EXAMPLE_PROMPTS.map((ex, i) => (
               <button
                 key={i}
-                onClick={() => onPromptChange(ex.prompt)}
+                onClick={() => onPromptChange(locale === 'zh' ? ex.promptZh : ex.promptEn)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground bg-muted/50 border border-border rounded-full hover:bg-muted hover:text-foreground hover:border-foreground/20 transition-all duration-150"
               >
                 <Sparkles className="w-3 h-3" />

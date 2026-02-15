@@ -80,7 +80,15 @@ export default function StrategyDesigner({
       )}
 
       {/* Simulation Results */}
-      <SimulationResult report={report} status={status} runId={runId} indicatorPreferences={indicatorPreferences} />
+      <SimulationResult
+        report={report}
+        status={status}
+        runId={runId}
+        prompt={prompt}
+        indicatorPreferences={indicatorPreferences}
+        backtestStartDate={backtestStartDate}
+        backtestEndDate={backtestEndDate}
+      />
 
       {/* History Panel */}
       <HistoryPanel />

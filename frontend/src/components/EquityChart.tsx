@@ -4,12 +4,10 @@ import {
   Brush,
   CartesianGrid,
   ComposedChart,
-  Legend,
   Line,
   ReferenceArea,
   ResponsiveContainer,
   Scatter,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -29,7 +27,11 @@ interface EquityChartProps {
 
 type TradePoint = {
   action: string;
+  symbol: string;
   price: number;
+  timestamp: string;
+  pnl: number | null;
+  reason: string | null;
 };
 
 type ChartRow = {
@@ -53,8 +55,9 @@ type PositionBand = {
 type WindowPreset = "3m" | "6m" | "1y" | "all";
 
 const COLOR_PRESET = {
-  curve: "#4f46e5",
-  drawdown: "rgba(99, 102, 241, 0.18)",
+  curve: "#111111",
+  drawdownLine: "#334155",
+  drawdownFill: "rgba(100, 116, 139, 0.14)",
 };
 
 function formatMoney(value: number): string {
@@ -117,7 +120,7 @@ function buildPositionBands(rows: ChartRow[]): PositionBand[] {
 function SkeletonChart() {
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
-      <div className="h-[330px] bg-muted/30 rounded animate-pulse" />
+      <div className="h-[390px] bg-muted/30 rounded animate-pulse" />
     </div>
   );
 }
@@ -134,46 +137,24 @@ function SellDot(props: any) {
   return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="white" strokeWidth={1} />;
 }
 
-function CustomTooltip({ active, payload, label, locale }: any) {
-  if (!active || !payload || payload.length === 0) return null;
-  const row = payload[0]?.payload as ChartRow | undefined;
-  if (!row) return null;
-
-  const dateLabel = formatDateByLocale(new Date(label).toISOString().slice(0, 10), locale);
-  const buys = row.buyCount;
-  const sells = row.sellCount;
-
-  return (
-    <div className="bg-foreground text-primary-foreground px-3 py-2 rounded-md shadow-lg text-xs">
-      <div className="text-[10px] text-primary-foreground/75 mb-1">{dateLabel}</div>
-      <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(row.equity)}</div>
-      <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(row.returnPct)}</div>
-      <div>{locale === "zh" ? "回撤" : "Drawdown"}: {formatPct(row.drawdownPct)}</div>
-      {(buys > 0 || sells > 0) && (
-        <div className="mt-1 border-t border-primary-foreground/20 pt-1">
-          <div>{locale === "zh" ? "信号" : "Signals"}: {buys > 0 ? `${locale === "zh" ? "买入" : "Buy"} × ${buys}` : ""}{buys > 0 && sells > 0 ? " | " : ""}{sells > 0 ? `${locale === "zh" ? "卖出" : "Sell"} × ${sells}` : ""}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function EquityChart({ data, trades, loading }: EquityChartProps) {
   const { locale, t } = useI18n();
   const { theme } = useTheme();
   const { palette } = useChartColor();
   const isDark = theme === "dark";
+
   const [windowPreset, setWindowPreset] = useState<WindowPreset>("6m");
   const [brushRange, setBrushRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+  const [hoverRow, setHoverRow] = useState<ChartRow | null>(null);
+  const [pinnedRow, setPinnedRow] = useState<ChartRow | null>(null);
+  const [selectedTradeRow, setSelectedTradeRow] = useState<ChartRow | null>(null);
 
   const rows = useMemo<ChartRow[]>(() => {
     if (!data || data.length === 0) return [];
 
     const equityByDay = new Map<string, number>();
     for (const point of data) {
-      const raw =
-        point.timestamp ??
-        (typeof point.t === "number" ? new Date(point.t).toISOString() : "");
+      const raw = point.timestamp ?? (typeof point.t === "number" ? new Date(point.t).toISOString() : "");
       const day = toDay(raw);
       const val = Number(point.value ?? point.v ?? 0);
       if (day && Number.isFinite(val)) equityByDay.set(day, val);
@@ -184,7 +165,14 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       const day = toDay(trade.timestamp || trade.entryTime || "");
       if (!day) continue;
       const next = tradesByDay.get(day) ?? [];
-      next.push({ action: String(trade.action || "").toUpperCase(), price: Number(trade.price || 0) });
+      next.push({
+        action: String(trade.action || "").toUpperCase(),
+        symbol: trade.symbol || "-",
+        price: Number(trade.price || 0),
+        timestamp: trade.timestamp || trade.entryTime || "",
+        pnl: typeof trade.pnl === "number" ? trade.pnl : null,
+        reason: trade.reason || null,
+      });
       tradesByDay.set(day, next);
     }
 
@@ -235,6 +223,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   }, [data, trades]);
 
   const positionBands = useMemo(() => buildPositionBands(rows), [rows]);
+  const activeInfo = pinnedRow ?? hoverRow;
+
   const presetPoints: Record<WindowPreset, number> = {
     "3m": 63,
     "6m": 126,
@@ -262,7 +252,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
   const tradeBuys = rows.filter((d) => d.buyCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
   const tradeSells = rows.filter((d) => d.sellCount > 0).map((d) => ({ ...d, markerY: d.returnPct }));
-
   const returnValues = rows.map((d) => d.returnPct);
   const drawdownValues = rows.map((d) => d.drawdownPct);
   const minReturn = Math.min(...returnValues);
@@ -271,7 +260,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
-  const cursorColor = isDark ? "#3f3f46" : "#d9dde4";
   const presetButtons: Array<{ key: WindowPreset; label: string }> = [
     { key: "3m", label: t("strategy.backtestPreset3m") },
     { key: "6m", label: t("strategy.backtestPreset6m") },
@@ -300,129 +288,174 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
           );
         })}
       </div>
-      <div className="h-[300px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={rows} syncId="bt-chart" margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-            {positionBands.map((band, idx) => (
-              <ReferenceArea
-                key={`${band.x1}-${band.x2}-${idx}`}
-                x1={band.x1}
-                x2={band.x2}
-                y1={minReturn - 1}
-                y2={maxReturn + 1}
-                fill={band.positive ? palette.holdUp : palette.holdDown}
-                strokeOpacity={0}
-              />
-            ))}
-            <XAxis
-              dataKey="ts"
-              type="number"
-              domain={["dataMin", "dataMax"]}
-              tick={{ fontSize: 10, fill: axisColor }}
-              tickLine={false}
-              axisLine={false}
-              minTickGap={26}
-              tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
-            />
-            <YAxis
-              yAxisId="return"
-              tick={{ fontSize: 10, fill: axisColor }}
-              tickLine={false}
-              axisLine={false}
-              width={56}
-              tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
-            />
-            <Tooltip content={<CustomTooltip locale={locale} />} cursor={{ stroke: cursorColor, strokeWidth: 1 }} />
-            <Legend />
 
-            <Line
-              yAxisId="return"
-              type="monotone"
-              dataKey="returnPct"
-              stroke={COLOR_PRESET.curve}
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 3.5, fill: COLOR_PRESET.curve, strokeWidth: 0 }}
-              name={locale === "zh" ? "策略累计收益" : "Strategy Return"}
-            />
-
-            <Scatter
-              yAxisId="return"
-              data={tradeBuys}
-              dataKey="markerY"
-              fill={palette.up}
-              shape={<BuyDot />}
-              name={locale === "zh" ? "买点" : "Buy"}
-              legendType="circle"
-            />
-
-            <Scatter
-              yAxisId="return"
-              data={tradeSells}
-              dataKey="markerY"
-              fill={palette.down}
-              shape={<SellDot />}
-              name={locale === "zh" ? "卖点" : "Sell"}
-              legendType="circle"
-            />
-
-            {rows.length > 120 && (
-              <Brush
+      <div>
+        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {locale === "zh" ? "策略累计收益" : "Strategy Return"}
+        </div>
+        {activeInfo && (
+          <div className="mb-2 inline-flex flex-col rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-foreground">
+            <div className="font-medium">
+              {formatDateByLocale(activeInfo.day, locale)}
+              {pinnedRow ? (locale === "zh" ? "（已固定）" : " (Pinned)") : ""}
+            </div>
+            <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(activeInfo.equity)}</div>
+            <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(activeInfo.returnPct)}</div>
+            <div>{locale === "zh" ? "回撤" : "Drawdown"}: {formatPct(activeInfo.drawdownPct)}</div>
+          </div>
+        )}
+        <div className="h-[260px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={rows}
+              syncId="bt-chart"
+              margin={{ top: 6, right: 10, left: 0, bottom: 0 }}
+              onMouseMove={(state: any) => {
+                if (pinnedRow) return;
+                const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
+                setHoverRow(row ?? null);
+              }}
+              onMouseLeave={() => {
+                if (!pinnedRow) setHoverRow(null);
+              }}
+              onClick={(state: any) => {
+                const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
+                if (!row) return;
+                setPinnedRow((prev) => (prev?.ts === row.ts ? null : row));
+              }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+              {positionBands.map((band, idx) => (
+                <ReferenceArea
+                  key={`${band.x1}-${band.x2}-${idx}`}
+                  x1={band.x1}
+                  x2={band.x2}
+                  y1={minReturn - 1}
+                  y2={maxReturn + 1}
+                  fill={band.positive ? palette.holdUp : palette.holdDown}
+                  strokeOpacity={0}
+                />
+              ))}
+              <XAxis
                 dataKey="ts"
-                height={22}
-                stroke={isDark ? "#71717a" : "#94a3b8"}
-                travellerWidth={8}
-                startIndex={brushRange.start}
-                endIndex={brushRange.end}
-                onChange={(next) => {
-                  const start = typeof next?.startIndex === "number" ? next.startIndex : brushRange.start;
-                  const end = typeof next?.endIndex === "number" ? next.endIndex : brushRange.end;
-                  setBrushRange({ start, end });
-                }}
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                tick={{ fontSize: 10, fill: axisColor }}
+                tickLine={false}
+                axisLine={false}
+                minTickGap={26}
                 tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
               />
-            )}
-          </ComposedChart>
-        </ResponsiveContainer>
+              <YAxis
+                yAxisId="return"
+                tick={{ fontSize: 10, fill: axisColor }}
+                tickLine={false}
+                axisLine={false}
+                width={56}
+                tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+              />
+
+              <Line
+                yAxisId="return"
+                type="monotone"
+                dataKey="returnPct"
+                stroke={COLOR_PRESET.curve}
+                strokeWidth={1.9}
+                dot={false}
+                activeDot={{ r: 3.2, fill: COLOR_PRESET.curve, strokeWidth: 0 }}
+              />
+
+              <Scatter
+                yAxisId="return"
+                data={tradeBuys}
+                dataKey="markerY"
+                fill={palette.up}
+                shape={<BuyDot />}
+                onClick={(point: any) => {
+                  const row = point?.payload as ChartRow | undefined;
+                  if (!row) return;
+                  setSelectedTradeRow(row);
+                  setPinnedRow(row);
+                }}
+              />
+
+              <Scatter
+                yAxisId="return"
+                data={tradeSells}
+                dataKey="markerY"
+                fill={palette.down}
+                shape={<SellDot />}
+                onClick={(point: any) => {
+                  const row = point?.payload as ChartRow | undefined;
+                  if (!row) return;
+                  setSelectedTradeRow(row);
+                  setPinnedRow(row);
+                }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
-      <div className="h-[90px]">
+      <div>
+        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {locale === "zh" ? "回撤" : "Drawdown"}
+        </div>
+        <div className="h-[82px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+              <XAxis dataKey="ts" type="number" domain={["dataMin", "dataMax"]} hide />
+              <YAxis
+                tick={{ fontSize: 10, fill: axisColor }}
+                tickLine={false}
+                axisLine={false}
+                width={56}
+                domain={[Math.min(minDrawdown - 0.5, -0.5), 0]}
+                tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+              />
+              <Area type="monotone" dataKey="drawdownPct" stroke={COLOR_PRESET.drawdownLine} strokeWidth={1} fill={COLOR_PRESET.drawdownFill} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="h-[48px]">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+          <AreaChart data={rows} syncId="bt-chart" margin={{ top: 0, right: 10, left: 0, bottom: 2 }}>
             <XAxis
               dataKey="ts"
               type="number"
               domain={["dataMin", "dataMax"]}
-              tick={{ fontSize: 10, fill: axisColor }}
+              tick={false}
               tickLine={false}
               axisLine={false}
-              minTickGap={26}
+            />
+            <YAxis hide />
+            <Area type="monotone" dataKey="returnPct" stroke="#94a3b8" strokeWidth={1} fill="rgba(148, 163, 184, 0.12)" />
+            <Brush
+              dataKey="ts"
+              height={24}
+              stroke={isDark ? "#71717a" : "#94a3b8"}
+              travellerWidth={8}
+              startIndex={brushRange.start}
+              endIndex={brushRange.end}
+              onChange={(next) => {
+                const start = typeof next?.startIndex === "number" ? next.startIndex : brushRange.start;
+                const end = typeof next?.endIndex === "number" ? next.endIndex : brushRange.end;
+                setBrushRange({ start, end });
+              }}
               tickFormatter={(val) => formatDateByLocale(new Date(Number(val)).toISOString().slice(0, 10), locale)}
-            />
-            <YAxis
-              tick={{ fontSize: 10, fill: axisColor }}
-              tickLine={false}
-              axisLine={false}
-              width={56}
-              domain={[Math.min(minDrawdown - 0.5, -0.5), 0]}
-              tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
-            />
-            <Tooltip content={<CustomTooltip locale={locale} />} cursor={{ stroke: cursorColor, strokeWidth: 1 }} />
-            <Area
-              type="monotone"
-              dataKey="drawdownPct"
-              stroke="#6366f1"
-              strokeWidth={1}
-              fill={COLOR_PRESET.drawdown}
-              name={locale === "zh" ? "回撤" : "Drawdown"}
             />
           </AreaChart>
         </ResponsiveContainer>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <span className="w-3 h-[2px] rounded-full bg-black" />
+          {locale === "zh" ? "策略累计收益" : "Strategy Return"}
+        </span>
         <span className="inline-flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: palette.up }} />
           {locale === "zh" ? "买点" : "Buy"}
@@ -440,6 +473,38 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
           {locale === "zh" ? "持仓负收益区间" : "Negative holding interval"}
         </span>
       </div>
+
+      {selectedTradeRow && selectedTradeRow.trades.length > 0 && (
+        <div className="rounded-md border border-border bg-muted/25 p-3">
+          <div className="mb-2 text-xs font-semibold text-foreground">
+            {locale === "zh" ? "交易详情" : "Trade Details"} · {formatDateByLocale(selectedTradeRow.day, locale)}
+          </div>
+          <div className="space-y-1.5">
+            {selectedTradeRow.trades.map((trade, idx) => (
+              <div key={`${trade.timestamp}-${idx}`} className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{trade.symbol}</span>
+                {" · "}
+                <span>{trade.action}</span>
+                {" · "}
+                <span>{formatMoney(trade.price)}</span>
+                {typeof trade.pnl === "number" ? (
+                  <>
+                    {" · "}
+                    <span>{locale === "zh" ? "盈亏" : "PnL"}: {formatMoney(trade.pnl)}</span>
+                  </>
+                ) : null}
+                {trade.reason ? (
+                  <>
+                    {" · "}
+                    <span>{locale === "zh" ? "原因" : "Reason"}: {trade.reason}</span>
+                  </>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

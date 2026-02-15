@@ -471,6 +471,7 @@ async def run_backtest_from_spec(
           decision_indicator_values[i][ind_id] = {"value": val}
 
   event_hits: dict[str, list[bool]] = {}
+  event_type_by_id: dict[str, str] = {}
   events = signal_layer.get("events") if isinstance(signal_layer, dict) else None
   if isinstance(events, list):
     for ev in events:
@@ -480,6 +481,7 @@ async def run_backtest_from_spec(
       if not event_id:
         continue
       event_type = str(ev.get("type") or "").strip().upper()
+      event_type_by_id[event_id] = event_type
       hits = [False] * len(session_rows)
       if event_type in ("CROSS_DOWN", "CROSS_UP", "CROSS"):
         direction = str(ev.get("direction") or "").upper()
@@ -542,7 +544,12 @@ async def run_backtest_from_spec(
       if not hits:
         return False
       scope = str(cond.get("scope") or "").upper()
+      event_type = event_type_by_id.get(event_id, "")
       if scope in ("LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", "BAR", ""):
+        if scope == "" and event_type in ("CROSS", "CROSS_UP", "CROSS_DOWN"):
+          lookback = _parse_lookback_days(constants.get("lookback"), default=5)
+          start_idx = max(0, session_idx - lookback + 1)
+          return any(hits[start_idx : session_idx + 1])
         return bool(hits[session_idx]) if session_idx < len(hits) else False
       lookback = _parse_lookback_days(scope if scope else constants.get("lookback"), default=1)
       start_idx = max(0, session_idx - lookback + 1)

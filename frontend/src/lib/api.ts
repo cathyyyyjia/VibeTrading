@@ -207,7 +207,14 @@ function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string
   if (stepId === "parse" && entry.msg === "StrategySpec ready" && kv) {
     const attemptsRaw = typeof kv.llm_attempts === "number" ? kv.llm_attempts : 1;
     const attempts = Math.max(1, Math.floor(attemptsRaw));
-    return `[${entry.level}] Strategy ready (attempts: ${attempts})`;
+    const model =
+      typeof kv.model === "string"
+        ? kv.model
+        : typeof kv.llm_model === "string"
+          ? kv.llm_model
+          : undefined;
+    const modelPrefix = model ? `LLM: ${model}, ` : "";
+    return `[${entry.level}] Strategy ready (${modelPrefix}attempts: ${attempts})`;
   }
   if (stepId === "data" && entry.msg === "Data ready" && kv) {
     const start = typeof kv.start_date === "string" ? kv.start_date : "";

@@ -50,10 +50,18 @@ function normalizeLogMessage(log: string): string {
 function localizeSubtask(raw: string, locale: "en" | "zh"): string {
   const line = normalizeLogMessage(raw);
 
-  const parseReady = line.match(/^Strategy ready \((?:LLM:\s*[^,]+,\s*)?attempts:\s*(\d+)\)$/i);
+  const parseReady = line.match(/^Strategy ready \((?:LLM:\s*([^,]+),\s*)?attempts:\s*(\d+)\)$/i);
   if (parseReady) {
-    const attempts = parseReady[1];
-    return locale === "zh" ? `策略解析完成（尝试：${attempts}次）` : `Strategy ready (attempts: ${attempts})`;
+    const model = parseReady[1]?.trim();
+    const attempts = parseReady[2];
+    if (locale === "zh") {
+      return model
+        ? `策略解析完成（LLM: ${model}, 尝试：${attempts}次）`
+        : `策略解析完成（尝试：${attempts}次）`;
+    }
+    return model
+      ? `Strategy ready (LLM: ${model}, attempts: ${attempts})`
+      : `Strategy ready (attempts: ${attempts})`;
   }
 
   if (/^Parsing strategy/i.test(line)) return locale === "zh" ? "正在使用大语言模型解析策略" : "Parsing strategy with LLM";
@@ -139,25 +147,16 @@ function SubtaskList({ step }: { step: StepInfo }) {
 }
 
 function BacktestProgress({ step, progress }: { step: StepInfo; progress: number }) {
-  const { locale } = useI18n();
   const latest = [...step.logs].reverse().find((log) => log.includes("Backtesting "));
   const m = latest?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
   const pctFromLog = m ? Number(m[4]) : Number.NaN;
   const pct = step.status === "done" ? 100 : Number.isFinite(pctFromLog) ? pctFromLog : progress;
-  const sessionDate = m?.[1];
-
-  const message = step.status === "done"
-    ? (locale === "zh" ? "回测完成" : "Backtest completed")
-    : sessionDate
-      ? (locale === "zh" ? `回测进行中：${formatDateByLocale(sessionDate, "zh")}` : `Backtesting ${sessionDate}`)
-      : (locale === "zh" ? "回测进行中" : "Backtesting");
 
   const safePct = Math.max(0, Math.min(100, pct));
 
   return (
-    <div className="mt-2.5 border border-border rounded-md p-3 bg-muted/30 space-y-2">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{message}</span>
+    <div className="mt-2.5 space-y-1.5">
+      <div className="flex items-center justify-end text-xs">
         <span className="font-mono text-foreground">{safePct.toFixed(1)}%</span>
       </div>
       <div className="w-full h-2 bg-muted rounded-full overflow-hidden">

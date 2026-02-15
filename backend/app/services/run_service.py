@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import uuid
@@ -56,9 +56,20 @@ def _fallback_ai_summary(kpis: dict[str, Any]) -> dict[str, str]:
   )
   zh = (
     f"该策略收益率为 {ret:.2f}%，夏普 {sharpe:.2f}，最大回撤 {max_dd:.2f}%，共 {trades} 笔交易。"
-    "建议进一步优化风控和入场时机，提升稳定性。"
+    "建议继续优化风控与入场时机，提升稳定性。"
   )
   return {"en": en, "zh": zh}
+
+
+def _summary_complete(summary: dict[str, Any]) -> bool:
+  en = summary.get("en")
+  zh = summary.get("zh")
+  return (
+    isinstance(en, str)
+    and isinstance(zh, str)
+    and len(en.strip()) >= 20
+    and len(zh.strip()) >= 20
+  )
 
 
 async def _generate_ai_summary(
@@ -106,9 +117,10 @@ async def _generate_ai_summary(
     )
     en = str(data.get("en") or "").strip()
     zh = str(data.get("zh") or "").strip()
-    if not en or not zh:
+    candidate = {"en": en, "zh": zh}
+    if not _summary_complete(candidate):
       return _fallback_ai_summary(kpis)
-    return {"en": en, "zh": zh}
+    return candidate
   except Exception:
     logger.exception("ai_summary_generation_failed")
     return _fallback_ai_summary(kpis)
@@ -455,3 +467,4 @@ async def execute_run(
         pass
     finally:
       await _clear_queue_lock(run_id)
+
