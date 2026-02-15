@@ -67,17 +67,6 @@ function toTs(day: string): number {
   return new Date(`${day}T00:00:00Z`).getTime();
 }
 
-function downsampleRows(rows: ChartRow[], maxPoints: number): ChartRow[] {
-  if (rows.length <= maxPoints) return rows;
-  const keep = new Set<number>([0, rows.length - 1]);
-  const step = Math.ceil(rows.length / maxPoints);
-  for (let i = 0; i < rows.length; i += step) keep.add(i);
-  for (let i = 0; i < rows.length; i += 1) {
-    if (rows[i].buyCount > 0 || rows[i].sellCount > 0) keep.add(i);
-  }
-  return Array.from(keep).sort((a, b) => a - b).map((idx) => rows[idx]);
-}
-
 function buildPositionBands(rows: ChartRow[]): PositionBand[] {
   const bands: PositionBand[] = [];
   let startIdx: number | null = null;
@@ -183,7 +172,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       });
     }
 
-    const sampledRows = downsampleRows(built, 1200);
+    const sampledRows = built;
     const sampledDays = new Set(sampledRows.map((r) => r.day));
     const rowByDay = new Map(sampledRows.map((r) => [r.day, r]));
 
@@ -195,7 +184,7 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
       const row = rowByDay.get(day);
       if (!row) continue;
       const action = String(trade.action || "").toUpperCase();
-      const markerTs = Number.isFinite(new Date(tsRaw).getTime()) ? new Date(tsRaw).getTime() : row.ts;
+      const markerTs = row.ts;
       if (action.includes("BUY")) {
         markers.push({ ts: markerTs, markerY: row.returnPct, action: "BUY" });
       } else if (action.includes("SELL")) {
@@ -297,8 +286,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
             />
             <Line type="monotone" dataKey="returnPct" stroke={CURVE_COLOR} strokeWidth={1.9} dot={false} activeDot={false} isAnimationActive={false} />
 
-            <Scatter data={buyMarkers} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} />
-            <Scatter data={sellMarkers} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} />
+            <Scatter data={buyMarkers} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} tooltipType="none" />
+            <Scatter data={sellMarkers} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} tooltipType="none" />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
