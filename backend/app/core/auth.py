@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import logging
 import json
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -14,10 +15,44 @@ from app.core.config import settings
 from app.core.errors import AppError, error_response
 
 _TOKEN_CACHE_TTL_SECONDS = 60.0
-_token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_token_cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 _jwks_cache: tuple[float, dict[str, Any]] = (0.0, {})
 _SUPPORTED_JWT_ALGS = {"RS256", "ES256", "EdDSA", "HS256"}
 logger = logging.getLogger(__name__)
+
+
+def _token_cache_capacity() -> int:
+  return max(1, int(settings.auth_token_cache_max_entries))
+
+
+def _token_cache_get(token: str) -> dict[str, Any] | None:
+  cached = _token_cache.get(token)
+  if cached is None:
+    return None
+  expires_at, claims = cached
+  if expires_at <= time.monotonic():
+    _token_cache.pop(token, None)
+    return None
+  _token_cache.move_to_end(token)
+  return claims
+
+
+def _token_cache_set(token: str, claims: dict[str, Any]) -> None:
+  now = time.monotonic()
+  _token_cache[token] = (now + _TOKEN_CACHE_TTL_SECONDS, claims)
+  _token_cache.move_to_end(token)
+
+  # Evict least recently used tokens first when exceeding capacity.
+  capacity = _token_cache_capacity()
+  while len(_token_cache) > capacity:
+    _token_cache.popitem(last=False)
+
+  # Opportunistically drop expired entries from the LRU side.
+  while _token_cache:
+    oldest_expires_at = next(iter(_token_cache.values()))[0]
+    if oldest_expires_at > now:
+      break
+    _token_cache.popitem(last=False)
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -32,13 +67,9 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 
 async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
-  now = time.monotonic()
-  cached = _token_cache.get(token)
+  cached = _token_cache_get(token)
   if cached is not None:
-    expires_at, claims = cached
-    if expires_at > now:
-      return claims
-    _token_cache.pop(token, None)
+    return cached
 
   if not settings.supabase_project_url:
     raise AppError("CONFIG_ERROR", "SUPABASE_PROJECT_URL is required")
@@ -76,7 +107,7 @@ async def verify_supabase_userinfo(token: str) -> dict[str, Any]:
     "app_metadata": user.get("app_metadata") if isinstance(user.get("app_metadata"), dict) else {},
     "user_metadata": user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {},
   }
-  _token_cache[token] = (time.monotonic() + _TOKEN_CACHE_TTL_SECONDS, claims)
+  _token_cache_set(token, claims)
   return claims
 
 
@@ -210,13 +241,9 @@ async def verify_supabase_jwt(token: str) -> dict[str, Any]:
 
 
 async def verify_access_token(token: str) -> dict[str, Any]:
-  now = time.monotonic()
-  cached = _token_cache.get(token)
+  cached = _token_cache_get(token)
   if cached is not None:
-    expires_at, claims = cached
-    if expires_at > now:
-      return claims
-    _token_cache.pop(token, None)
+    return cached
 
   mode = settings.auth_mode.strip().lower()
   if mode == "remote_userinfo":
@@ -224,7 +251,7 @@ async def verify_access_token(token: str) -> dict[str, Any]:
   else:
     claims = await verify_supabase_jwt(token)
 
-  _token_cache[token] = (time.monotonic() + _TOKEN_CACHE_TTL_SECONDS, claims)
+  _token_cache_set(token, claims)
   return claims
 
 

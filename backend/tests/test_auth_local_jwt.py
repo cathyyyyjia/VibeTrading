@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -36,7 +37,7 @@ async def test_verify_access_token_local_jwt_rs256(monkeypatch: pytest.MonkeyPat
   monkeypatch.setattr(settings, "supabase_jwt_issuer", issuer)
   monkeypatch.setattr(settings, "supabase_jwt_audiences", "authenticated")
   monkeypatch.setattr(auth, "_jwks_cache", (0.0, {}))
-  monkeypatch.setattr(auth, "_token_cache", {})
+  monkeypatch.setattr(auth, "_token_cache", OrderedDict())
 
   async def _fake_get_jwk_for_kid(kid: str) -> dict[str, object]:
     assert kid == "k1"
@@ -53,7 +54,7 @@ async def test_verify_access_token_local_jwt_rs256(monkeypatch: pytest.MonkeyPat
 @pytest.mark.asyncio
 async def test_verify_access_token_remote_mode(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(settings, "auth_mode", "remote_userinfo")
-  monkeypatch.setattr(auth, "_token_cache", {})
+  monkeypatch.setattr(auth, "_token_cache", OrderedDict())
 
   async def _fake_remote(token: str) -> dict[str, object]:
     assert token == "test-token"
@@ -62,3 +63,24 @@ async def test_verify_access_token_remote_mode(monkeypatch: pytest.MonkeyPatch) 
   monkeypatch.setattr(auth, "verify_supabase_userinfo", _fake_remote)
   claims = await auth.verify_access_token("test-token")
   assert claims["sub"] == "uid-remote"
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_cache_is_bounded_lru(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(settings, "auth_mode", "remote_userinfo")
+  monkeypatch.setattr(settings, "auth_token_cache_max_entries", 2)
+  monkeypatch.setattr(auth, "_token_cache", OrderedDict())
+
+  async def _fake_remote(token: str) -> dict[str, object]:
+    return {"sub": f"uid-{token}", "email": "remote@example.com", "role": "authenticated"}
+
+  monkeypatch.setattr(auth, "verify_supabase_userinfo", _fake_remote)
+
+  await auth.verify_access_token("token-1")
+  await auth.verify_access_token("token-2")
+  await auth.verify_access_token("token-3")
+
+  assert len(auth._token_cache) == 2
+  assert "token-1" not in auth._token_cache
+  assert "token-2" in auth._token_cache
+  assert "token-3" in auth._token_cache

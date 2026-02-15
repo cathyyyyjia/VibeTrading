@@ -21,6 +21,7 @@ class Settings(BaseSettings):
   supabase_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_SECRET_KEY"))
   supabase_project_url: str | None = None
   auth_mode: str = "local_jwt"
+  auth_token_cache_max_entries: int = 4096
   supabase_jwt_issuer: str | None = None
   supabase_jwt_audiences: str = "authenticated"
   supabase_jwks_cache_ttl_seconds: int = 600
