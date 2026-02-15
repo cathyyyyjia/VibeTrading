@@ -2,13 +2,13 @@
   CartesianGrid,
   ComposedChart,
   Line,
-  ReferenceLine,
   ResponsiveContainer,
   Scatter,
+  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useI18n } from "@/contexts/I18nContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { formatDateByLocale } from "@/lib/date";
@@ -86,11 +86,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  const [hoverRow, setHoverRow] = useState<ChartRow | null>(null);
-  const [pinnedRow, setPinnedRow] = useState<ChartRow | null>(null);
-  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
-  const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null);
-
   const rows = useMemo<ChartRow[]>(() => {
     if (!data || data.length === 0) return [];
 
@@ -139,9 +134,6 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   if (loading) return <SkeletonChart />;
   if (rows.length === 0) return null;
 
-  const activeInfo = pinnedRow ?? hoverRow;
-  const activePos = pinnedPos ?? hoverPos;
-
   const yValues = rows.map((d) => d.returnPct);
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
@@ -151,45 +143,26 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
 
+  const renderTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const row = payload[0]?.payload as ChartRow | undefined;
+    if (!row) return null;
+    return (
+      <div className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm">
+        <div className="font-medium">{formatDateByLocale(row.day, locale)}</div>
+        <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(row.equity)}</div>
+        <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(row.returnPct)}</div>
+        {row.buyCount > 0 ? <div>{locale === "zh" ? "买点" : "Buy"}: {row.buyCount}</div> : null}
+        {row.sellCount > 0 ? <div>{locale === "zh" ? "卖点" : "Sell"}: {row.sellCount}</div> : null}
+      </div>
+    );
+  };
+
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
       <div className="relative h-[320px]">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart
-            data={rows}
-            margin={{ top: 8, right: 10, left: 2, bottom: 0 }}
-            onMouseMove={(state: any) => {
-              if (pinnedRow) return;
-              const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
-              setHoverRow(row ?? null);
-              if (row && typeof state?.chartX === "number" && typeof state?.chartY === "number") {
-                setHoverPos({ x: state.chartX, y: state.chartY });
-              } else {
-                setHoverPos(null);
-              }
-            }}
-            onMouseLeave={() => {
-              if (!pinnedRow) {
-                setHoverRow(null);
-                setHoverPos(null);
-              }
-            }}
-            onClick={(state: any) => {
-              const row = state?.activePayload?.[0]?.payload as ChartRow | undefined;
-              if (pinnedRow) {
-                setPinnedRow(null);
-                setPinnedPos(null);
-                return;
-              }
-              if (!row) return;
-              setPinnedRow(row);
-              if (typeof state?.chartX === "number" && typeof state?.chartY === "number") {
-                setPinnedPos({ x: state.chartX, y: state.chartY });
-              } else {
-                setPinnedPos(null);
-              }
-            }}
-          >
+          <ComposedChart data={rows} margin={{ top: 8, right: 10, left: 2, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
             <XAxis
               dataKey="ts"
@@ -218,14 +191,11 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 fontSize: 10,
               }}
             />
-            {activeInfo ? (
-              <ReferenceLine
-                x={activeInfo.ts}
-                stroke={isDark ? "#71717a" : "#94a3b8"}
-                strokeDasharray="3 3"
-                strokeOpacity={0.75}
-              />
-            ) : null}
+
+            <Tooltip
+              cursor={{ stroke: isDark ? "#71717a" : "#94a3b8", strokeDasharray: "3 3", strokeOpacity: 0.75 }}
+              content={renderTooltip}
+            />
 
             <Line
               type="monotone"
@@ -233,67 +203,14 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
               stroke={CURVE_COLOR}
               strokeWidth={1.9}
               dot={false}
-              activeDot={{ r: 3.2, fill: CURVE_COLOR, strokeWidth: 0 }}
+              activeDot={false}
+              isAnimationActive={false}
             />
 
-            <Scatter
-              data={tradeBuys}
-              dataKey="markerY"
-              shape={<BuyDot />}
-              onClick={(point: any) => {
-                if (pinnedRow) {
-                  setPinnedRow(null);
-                  setPinnedPos(null);
-                  return;
-                }
-                const row = point?.payload as ChartRow | undefined;
-                if (!row) return;
-                setPinnedRow(row);
-                if (typeof point?.cx === "number" && typeof point?.cy === "number") {
-                  setPinnedPos({ x: point.cx, y: point.cy });
-                }
-              }}
-            />
-
-            <Scatter
-              data={tradeSells}
-              dataKey="markerY"
-              shape={<SellDot />}
-              onClick={(point: any) => {
-                if (pinnedRow) {
-                  setPinnedRow(null);
-                  setPinnedPos(null);
-                  return;
-                }
-                const row = point?.payload as ChartRow | undefined;
-                if (!row) return;
-                setPinnedRow(row);
-                if (typeof point?.cx === "number" && typeof point?.cy === "number") {
-                  setPinnedPos({ x: point.cx, y: point.cy });
-                }
-              }}
-            />
+            <Scatter data={tradeBuys} dataKey="markerY" shape={<BuyDot />} isAnimationActive={false} />
+            <Scatter data={tradeSells} dataKey="markerY" shape={<SellDot />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
-
-        {activeInfo && activePos && (
-          <div
-            className="pointer-events-none absolute z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm backdrop-blur-[1px]"
-            style={{
-              left: `${activePos.x + 14}px`,
-              top: `${Math.max(8, activePos.y - 18)}px`,
-            }}
-          >
-            <div className="font-medium">
-              {formatDateByLocale(activeInfo.day, locale)}
-              {pinnedRow ? (locale === "zh" ? "（已固定）" : " (Pinned)") : ""}
-            </div>
-            <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(activeInfo.equity)}</div>
-            <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(activeInfo.returnPct)}</div>
-            {activeInfo.buyCount > 0 ? <div>{locale === "zh" ? "买点" : "Buy"}: {activeInfo.buyCount}</div> : null}
-            {activeInfo.sellCount > 0 ? <div>{locale === "zh" ? "卖点" : "Sell"}: {activeInfo.sellCount}</div> : null}
-          </div>
-        )}
       </div>
     </div>
   );
