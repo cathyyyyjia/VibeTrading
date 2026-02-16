@@ -43,6 +43,17 @@ type PositionBand = {
   positive: boolean;
 };
 
+function toSoftRgba(color: string, alpha: number): string {
+  const hex = color.trim().replace("#", "");
+  const valid = /^[0-9a-fA-F]{6}$/.test(hex) || /^[0-9a-fA-F]{3}$/.test(hex);
+  if (!valid) return color;
+  const full = hex.length === 3 ? hex.split("").map((c) => `${c}${c}`).join("") : hex;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function formatMoney(value: number): string {
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
@@ -151,13 +162,13 @@ function SkeletonChart() {
 function BuyDot(props: any, color: string) {
   const { cx, cy, payload } = props;
   if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.buyCount) return null;
-  return <circle cx={cx} cy={cy} r={3.5} fill={color} stroke="white" strokeWidth={1} />;
+  return <circle cx={cx} cy={cy} r={5} fill={color} stroke="white" strokeWidth={1} />;
 }
 
 function SellDot(props: any, color: string) {
   const { cx, cy, payload } = props;
   if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.sellCount) return null;
-  return <circle cx={cx} cy={cy} r={3.5} fill={color} stroke="white" strokeWidth={1} />;
+  return <circle cx={cx} cy={cy} r={5} fill={color} stroke="white" strokeWidth={1} />;
 }
 
 function formatTradeDetail(trade: TradeRecord, action: "buy" | "sell", locale: string): string {
@@ -270,6 +281,8 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
   const curveColor = isDark ? "#e4e4e7" : "#111111";
   const buyColor = palette.up;
   const sellColor = palette.down;
+  const buyMarkerColor = useMemo(() => toSoftRgba(buyColor, isDark ? 0.86 : 0.72), [buyColor, isDark]);
+  const sellMarkerColor = useMemo(() => toSoftRgba(sellColor, isDark ? 0.86 : 0.72), [sellColor, isDark]);
 
   const gridColor = isDark ? "#27272a" : "#eceff3";
   const axisColor = isDark ? "#a1a1aa" : "#64748b";
@@ -281,11 +294,11 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
   const dotRenderer = useCallback(
     (props: any) => (
       <g>
-        {BuyDot(props, buyColor)}
-        {SellDot(props, sellColor)}
+        {BuyDot(props, buyMarkerColor)}
+        {SellDot(props, sellMarkerColor)}
       </g>
     ),
-    [buyColor, sellColor]
+    [buyMarkerColor, sellMarkerColor]
   );
 
   const selectedTradeMarker = useMemo(() => {
@@ -303,9 +316,9 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
       symbol: selectedTrade.symbol,
       price: Number(selectedTrade.price),
       action,
-      color: action === "buy" ? buyColor : sellColor,
+      color: action === "buy" ? buyMarkerColor : sellMarkerColor,
     };
-  }, [selectedTrade, rows, buyColor, sellColor]);
+  }, [selectedTrade, rows, buyMarkerColor, sellMarkerColor]);
 
   const selectedTooltipRow = useMemo(() => {
     if (!selectedTrade) return null;
@@ -421,7 +434,7 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
               type="monotone"
               dataKey="returnPct"
               stroke={curveColor}
-              strokeWidth={1.9}
+              strokeWidth={1.5}
               dot={dotRenderer}
               activeDot={false}
               isAnimationActive={animateIntro}
@@ -434,8 +447,8 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: buyColor }} />{locale === "zh" ? "买点" : "Buy"}</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sellColor }} />{locale === "zh" ? "卖点" : "Sell"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: buyMarkerColor }} />{locale === "zh" ? "买点" : "Buy"}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sellMarkerColor }} />{locale === "zh" ? "卖点" : "Sell"}</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: palette.holdUp }} />{locale === "zh" ? "持仓正收益区间" : "Positive holding interval"}</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: palette.holdDown }} />{locale === "zh" ? "持仓负收益区间" : "Negative holding interval"}</span>
       </div>
