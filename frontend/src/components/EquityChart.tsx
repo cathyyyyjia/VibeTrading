@@ -1,9 +1,10 @@
-﻿import {
+import {
   Area,
   CartesianGrid,
   ComposedChart,
   Line,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,6 +20,7 @@ import type { TradeRecord } from "@/lib/api";
 interface EquityChartProps {
   data: Array<{ t?: number; v?: number; timestamp?: string; value?: number }> | null;
   trades?: TradeRecord[] | null;
+  selectedTrade?: TradeRecord | null;
   loading: boolean;
 }
 
@@ -29,6 +31,8 @@ type ChartRow = {
   returnPct: number;
   buyCount: number;
   sellCount: number;
+  buyTrades: TradeRecord[];
+  sellTrades: TradeRecord[];
   inPositionStart: boolean;
   inPositionEnd: boolean;
 };
@@ -156,7 +160,16 @@ function SellDot(props: any, color: string) {
   return <circle cx={cx} cy={cy} r={3.5} fill={color} stroke="white" strokeWidth={1} />;
 }
 
-export default function EquityChart({ data, trades, loading }: EquityChartProps) {
+function formatTradeDetail(trade: TradeRecord, action: "buy" | "sell", locale: string): string {
+  const actionText = locale === "zh" ? (action === "buy" ? "买入" : "卖出") : (action === "buy" ? "Buy" : "Sell");
+  const price = Number(trade.price);
+  const priceText = Number.isFinite(price)
+    ? `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : "-";
+  return `${actionText} ${trade.symbol} ${priceText}`;
+}
+
+export default function EquityChart({ data, trades, selectedTrade, loading }: EquityChartProps) {
   const { locale } = useI18n();
   const { palette } = useChartColor();
   const { theme } = useTheme();
@@ -212,13 +225,17 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
 
       let buyCount = 0;
       let sellCount = 0;
+      const buyTrades: TradeRecord[] = [];
+      const sellTrades: TradeRecord[] = [];
       for (const trade of dayTrades) {
         const action = classifyTradeAction(String(trade.action || ""));
         if (action === "buy") {
           buyCount += 1;
+          buyTrades.push(trade);
           position += 1;
         } else if (action === "sell") {
           sellCount += 1;
+          sellTrades.push(trade);
           position = Math.max(0, position - 1);
         }
       }
@@ -230,6 +247,8 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
         returnPct,
         buyCount,
         sellCount,
+        buyTrades,
+        sellTrades,
         inPositionStart,
         inPositionEnd: position > 0,
       });
@@ -269,6 +288,25 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
     [buyColor, sellColor]
   );
 
+  const selectedTradeMarker = useMemo(() => {
+    if (!selectedTrade) return null;
+    const rawTs = selectedTrade.timestamp || selectedTrade.exitTime || selectedTrade.entryTime || "";
+    const day = toDay(rawTs);
+    if (!day) return null;
+    const row = rows.find((x) => x.day === day);
+    if (!row) return null;
+    const action = classifyTradeAction(String(selectedTrade.action || ""));
+    if (!action) return null;
+    return {
+      ts: row.ts,
+      day: row.day,
+      symbol: selectedTrade.symbol,
+      price: Number(selectedTrade.price),
+      action,
+      color: action === "buy" ? buyColor : sellColor,
+    };
+  }, [selectedTrade, rows, buyColor, sellColor]);
+
   const renderTooltip = useCallback(
     ({ active, payload }: any) => {
       if (!active || !payload?.length) return null;
@@ -281,8 +319,12 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
           <div className="font-medium">{formatDateByLocale(row.day, locale)}</div>
           <div>{locale === "zh" ? "策略净值" : "Equity"}: {formatMoney(row.equity)}</div>
           <div>{locale === "zh" ? "累计收益" : "Return"}: {formatPct(row.returnPct)}</div>
-          {row.buyCount > 0 ? <div>{locale === "zh" ? "买点" : "Buy"}: {row.buyCount}</div> : null}
-          {row.sellCount > 0 ? <div>{locale === "zh" ? "卖点" : "Sell"}: {row.sellCount}</div> : null}
+          {row.buyTrades.map((trade, idx) => (
+            <div key={`buy-${trade.symbol}-${trade.timestamp}-${idx}`}>{formatTradeDetail(trade, "buy", locale)}</div>
+          ))}
+          {row.sellTrades.map((trade, idx) => (
+            <div key={`sell-${trade.symbol}-${trade.timestamp}-${idx}`}>{formatTradeDetail(trade, "sell", locale)}</div>
+          ))}
         </div>
       );
     },
@@ -312,6 +354,14 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
                 strokeOpacity={0}
               />
             ))}
+            {selectedTradeMarker ? (
+              <ReferenceLine
+                x={selectedTradeMarker.ts}
+                stroke={selectedTradeMarker.color}
+                strokeDasharray="4 3"
+                strokeOpacity={0.9}
+              />
+            ) : null}
 
             <XAxis
               dataKey="ts"
@@ -373,6 +423,19 @@ export default function EquityChart({ data, trades, loading }: EquityChartProps)
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {selectedTradeMarker ? (
+        <div
+          className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm"
+          style={{ borderLeftColor: selectedTradeMarker.color, borderLeftWidth: 2 }}
+        >
+          <div className="font-medium">{formatDateByLocale(selectedTradeMarker.day, locale)}</div>
+          <div>
+            {locale === "zh"
+              ? `${selectedTradeMarker.action === "buy" ? "买入" : "卖出"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`
+              : `${selectedTradeMarker.action === "buy" ? "Buy" : "Sell"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: buyColor }} />{locale === "zh" ? "买点" : "Buy"}</span>

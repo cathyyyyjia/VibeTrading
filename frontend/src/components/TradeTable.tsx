@@ -4,6 +4,9 @@ import type { TradeRecord } from "@/lib/api";
 interface TradeTableProps {
   trades: TradeRecord[] | null;
   loading: boolean;
+  selectedTrade?: TradeRecord | null;
+  onTradeHover?: (trade: TradeRecord | null) => void;
+  onTradeSelect?: (trade: TradeRecord) => void;
 }
 
 function SkeletonRow() {
@@ -18,7 +21,17 @@ function SkeletonRow() {
   );
 }
 
-export default function TradeTable({ trades, loading }: TradeTableProps) {
+function tradeKey(trade: TradeRecord): string {
+  return `${trade.timestamp}|${trade.entryTime ?? ""}|${trade.symbol}|${trade.action}|${trade.price}`;
+}
+
+export default function TradeTable({
+  trades,
+  loading,
+  selectedTrade,
+  onTradeHover,
+  onTradeSelect,
+}: TradeTableProps) {
   const { t, locale } = useI18n();
 
   const headers = [
@@ -70,7 +83,17 @@ export default function TradeTable({ trades, loading }: TradeTableProps) {
           </thead>
           <tbody>
             {hasTrades ? trades!.map((trade, index) => (
-              <tr key={index} className={`hover:bg-muted/20 transition-colors ${index < trades.length - 1 ? "border-b border-border/40" : ""}`}>
+              <tr
+                key={index}
+                onMouseEnter={() => onTradeHover?.(trade)}
+                onMouseLeave={() => onTradeHover?.(null)}
+                onClick={() => onTradeSelect?.(trade)}
+                className={`transition-colors cursor-pointer ${index < trades.length - 1 ? "border-b border-border/40" : ""} ${
+                  selectedTrade && tradeKey(selectedTrade) === tradeKey(trade)
+                    ? "bg-primary/10 hover:bg-primary/15"
+                    : "hover:bg-muted/20"
+                }`}
+              >
                 <td className="py-2.5 px-4 text-sm text-muted-foreground">{trade.entryTime || trade.timestamp || "-"}</td>
                 <td className="py-2.5 px-4 text-sm font-medium text-foreground font-mono">{trade.symbol}</td>
                 <td className="py-2.5 px-4">

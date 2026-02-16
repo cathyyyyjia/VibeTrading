@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import * as api from '@/lib/api';
-import type { HistoryEntry } from '@/lib/api';
+import type { HistoryEntry, TradeRecord } from '@/lib/api';
 import KPICards from './KPICards';
 import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
@@ -57,6 +57,13 @@ export default function HistoryPanel({}: HistoryPanelProps) {
   const [metaByRunId, setMetaByRunId] = useState<Record<string, RunMeta>>({});
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<HistoryEntry | null>(null);
   const [isDeletingStrategy, setIsDeletingStrategy] = useState(false);
+  const [hoveredTradeByRunId, setHoveredTradeByRunId] = useState<Record<string, TradeRecord | null>>({});
+  const [pinnedTradeByRunId, setPinnedTradeByRunId] = useState<Record<string, TradeRecord | null>>({});
+
+  const getTradeKey = (trade: TradeRecord | null) => {
+    if (!trade) return "";
+    return `${trade.timestamp}|${trade.entryTime ?? ""}|${trade.symbol}|${trade.action}|${trade.price}`;
+  };
 
   const parseRunMeta = (dslContent: any, requestContent: any): RunMeta => {
     const empty: RunMeta = {
@@ -231,6 +238,20 @@ export default function HistoryPanel({}: HistoryPanelProps) {
         removedRunIds.forEach((runId) => next.delete(runId));
         return next;
       });
+      setHoveredTradeByRunId((prev) => {
+        const next = { ...prev };
+        removedRunIds.forEach((runId) => {
+          delete next[runId];
+        });
+        return next;
+      });
+      setPinnedTradeByRunId((prev) => {
+        const next = { ...prev };
+        removedRunIds.forEach((runId) => {
+          delete next[runId];
+        });
+        return next;
+      });
       toast.success(t('history.deleteSuccess'));
     } catch {
       toast.error(t('history.deleteFailed'));
@@ -370,6 +391,7 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                         <EquityChart
                           data={merged.equity}
                           trades={merged.trades || null}
+                          selectedTrade={hoveredTradeByRunId[entry.runId] ?? pinnedTradeByRunId[entry.runId] ?? null}
                           loading={false}
                         />
                       </div>
@@ -381,7 +403,21 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                         <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
                           {t('history.trades')}
                         </h3>
-                        <TradeTable trades={merged.trades} loading={false} />
+                        <TradeTable
+                          trades={merged.trades}
+                          loading={false}
+                          selectedTrade={hoveredTradeByRunId[entry.runId] ?? pinnedTradeByRunId[entry.runId] ?? null}
+                          onTradeHover={(trade) => {
+                            setHoveredTradeByRunId((prev) => ({ ...prev, [entry.runId]: trade }));
+                          }}
+                          onTradeSelect={(trade) => {
+                            setPinnedTradeByRunId((prev) => {
+                              const current = prev[entry.runId] ?? null;
+                              const next = getTradeKey(current) === getTradeKey(trade) ? null : trade;
+                              return { ...prev, [entry.runId]: next };
+                            });
+                          }}
+                        />
                       </div>
                     )}
 

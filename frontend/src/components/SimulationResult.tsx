@@ -9,7 +9,8 @@ import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
-import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
+import type { IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
+import { useMemo, useState } from 'react';
 
 interface SimulationResultProps {
   report: RunReportResponse | null;
@@ -29,9 +30,17 @@ export default function SimulationResult({
   backtestEndDate,
 }: SimulationResultProps) {
   const { t, locale } = useI18n();
+  const [hoveredTrade, setHoveredTrade] = useState<TradeRecord | null>(null);
+  const [pinnedTrade, setPinnedTrade] = useState<TradeRecord | null>(null);
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const range = `${backtestStartDate} - ${backtestEndDate}`;
+  const activeTrade = useMemo(() => hoveredTrade ?? pinnedTrade, [hoveredTrade, pinnedTrade]);
+
+  const getTradeKey = (trade: TradeRecord | null) => {
+    if (!trade) return "";
+    return `${trade.timestamp}|${trade.entryTime ?? ""}|${trade.symbol}|${trade.action}|${trade.price}`;
+  };
 
   if (!showResult) return null;
 
@@ -83,11 +92,20 @@ export default function SimulationResult({
       <EquityChart
         data={report?.equity || null}
         trades={report?.trades || null}
+        selectedTrade={activeTrade}
         loading={isLoading && !report}
       />
 
       {/* Trade Table */}
-      <TradeTable trades={report?.trades || null} loading={isLoading && !report} />
+      <TradeTable
+        trades={report?.trades || null}
+        loading={isLoading && !report}
+        selectedTrade={activeTrade}
+        onTradeHover={(trade) => setHoveredTrade(trade)}
+        onTradeSelect={(trade) => {
+          setPinnedTrade((prev) => (getTradeKey(prev) === getTradeKey(trade) ? null : trade));
+        }}
+      />
     </div>
   );
 }
