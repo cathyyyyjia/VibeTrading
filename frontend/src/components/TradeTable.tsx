@@ -70,7 +70,7 @@ export default function TradeTable({
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
-      <div className="max-h-[300px] overflow-y-auto">
+      <div className="max-h-[300px] overflow-y-auto" onMouseLeave={() => onTradeHover?.(null)}>
         <table className="w-full">
           <thead className="sticky top-0 bg-card z-10">
             <tr className="border-b border-border">
@@ -86,7 +86,6 @@ export default function TradeTable({
               <tr
                 key={index}
                 onMouseEnter={() => onTradeHover?.(trade)}
-                onMouseLeave={() => onTradeHover?.(null)}
                 onClick={() => onTradeSelect?.(trade)}
                 className={`transition-colors cursor-pointer ${index < trades.length - 1 ? "border-b border-border/40" : ""} ${
                   selectedTrade && tradeKey(selectedTrade) === tradeKey(trade)

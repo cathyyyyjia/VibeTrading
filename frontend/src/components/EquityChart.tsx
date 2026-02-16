@@ -422,20 +422,20 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
             />
           </ComposedChart>
         </ResponsiveContainer>
-      </div>
-      {selectedTradeMarker ? (
-        <div
-          className="rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm"
-          style={{ borderLeftColor: selectedTradeMarker.color, borderLeftWidth: 2 }}
-        >
-          <div className="font-medium">{formatDateByLocale(selectedTradeMarker.day, locale)}</div>
-          <div>
-            {locale === "zh"
-              ? `${selectedTradeMarker.action === "buy" ? "买入" : "卖出"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`
-              : `${selectedTradeMarker.action === "buy" ? "Buy" : "Sell"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`}
+        {selectedTradeMarker ? (
+          <div
+            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm"
+            style={{ borderLeftColor: selectedTradeMarker.color, borderLeftWidth: 2 }}
+          >
+            <div className="font-medium">{formatDateByLocale(selectedTradeMarker.day, locale)}</div>
+            <div>
+              {locale === "zh"
+                ? `${selectedTradeMarker.action === "buy" ? "买入" : "卖出"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`
+                : `${selectedTradeMarker.action === "buy" ? "Buy" : "Sell"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: buyColor }} />{locale === "zh" ? "买点" : "Buy"}</span>
