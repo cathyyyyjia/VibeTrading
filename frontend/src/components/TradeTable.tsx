@@ -1,12 +1,9 @@
-import { Download } from "lucide-react";
-import { downloadCsv, tradesToCsv } from "@/lib/csv";
 import { useI18n } from "@/contexts/I18nContext";
 import type { TradeRecord } from "@/lib/api";
 
 interface TradeTableProps {
   trades: TradeRecord[] | null;
   loading: boolean;
-  runId: string | null;
 }
 
 function SkeletonRow() {
@@ -21,14 +18,8 @@ function SkeletonRow() {
   );
 }
 
-export default function TradeTable({ trades, loading, runId }: TradeTableProps) {
+export default function TradeTable({ trades, loading }: TradeTableProps) {
   const { t, locale } = useI18n();
-
-  const handleExportCSV = () => {
-    if (!trades) return;
-    const csv = tradesToCsv(trades as never);
-    downloadCsv(`trades-${runId || "export"}.csv`, csv);
-  };
 
   const headers = [
     locale === "zh" ? "时间" : "TIME",
@@ -66,13 +57,6 @@ export default function TradeTable({ trades, loading, runId }: TradeTableProps) 
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
-      <div className="flex items-center justify-end px-4 py-3 border-b border-border">
-        <button onClick={handleExportCSV} className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-          <Download className="w-3.5 h-3.5" />
-          {t("trade.exportCsv")}
-        </button>
-      </div>
-
       <div className="max-h-[300px] overflow-y-auto">
         <table className="w-full">
           <thead className="sticky top-0 bg-card z-10">

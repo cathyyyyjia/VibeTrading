@@ -274,7 +274,7 @@ const zh: Record<string, string> = {
   "history.deleteConfirm": "删除该策略及其相关回测记录？",
   "history.deleteSuccess": "策略已删除",
   "history.deleteFailed": "删除策略失败",
-  "history.downloadResults": "结果下载",
+  "history.downloadResults": "下载结果",
   "history.downloadFailed": "下载失败",
   "trade.title": "交易记录",
   "trade.exportCsv": "导出 CSV",

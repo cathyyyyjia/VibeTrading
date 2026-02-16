@@ -82,13 +82,12 @@ export default function SimulationResult({
       {/* Equity Chart */}
       <EquityChart
         data={report?.equity || null}
-        market={report?.market || null}
         trades={report?.trades || null}
         loading={isLoading && !report}
       />
 
       {/* Trade Table */}
-      <TradeTable trades={report?.trades || null} loading={isLoading && !report} runId={runId} />
+      <TradeTable trades={report?.trades || null} loading={isLoading && !report} />
     </div>
   );
 }

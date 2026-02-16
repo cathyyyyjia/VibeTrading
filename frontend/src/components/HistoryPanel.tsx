@@ -8,6 +8,16 @@ import { ChevronDown, Download, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import * as api from '@/lib/api';
 import type { HistoryEntry } from '@/lib/api';
 import KPICards from './KPICards';
@@ -45,6 +55,8 @@ export default function HistoryPanel({}: HistoryPanelProps) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detailsByRunId, setDetailsByRunId] = useState<Record<string, Partial<HistoryEntry>>>({});
   const [metaByRunId, setMetaByRunId] = useState<Record<string, RunMeta>>({});
+  const [pendingDeleteEntry, setPendingDeleteEntry] = useState<HistoryEntry | null>(null);
+  const [isDeletingStrategy, setIsDeletingStrategy] = useState(false);
 
   const parseRunMeta = (dslContent: any, requestContent: any): RunMeta => {
     const empty: RunMeta = {
@@ -201,7 +213,8 @@ export default function HistoryPanel({}: HistoryPanelProps) {
       toast.error(t('history.deleteFailed'));
       return;
     }
-    if (!window.confirm(t('history.deleteConfirm'))) return;
+
+    setIsDeletingStrategy(true);
     try {
       await api.deleteStrategy(entry.strategyId);
       const removedRunIds = new Set(history.filter((item) => item.strategyId === entry.strategyId).map((item) => item.runId));
@@ -221,6 +234,9 @@ export default function HistoryPanel({}: HistoryPanelProps) {
       toast.success(t('history.deleteSuccess'));
     } catch {
       toast.error(t('history.deleteFailed'));
+    } finally {
+      setIsDeletingStrategy(false);
+      setPendingDeleteEntry(null);
     }
   };
 
@@ -299,7 +315,11 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      void handleDeleteStrategy(entry);
+                      if (!entry.strategyId) {
+                        toast.error(t('history.deleteFailed'));
+                        return;
+                      }
+                      setPendingDeleteEntry(entry);
                     }}
                     className="p-1.5 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
                     title={t('history.delete')}
@@ -349,7 +369,6 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                         </h3>
                         <EquityChart
                           data={merged.equity}
-                          market={merged.market || null}
                           trades={merged.trades || null}
                           loading={false}
                         />
@@ -362,7 +381,7 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                         <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
                           {t('history.trades')}
                         </h3>
-                        <TradeTable trades={merged.trades} loading={false} runId={entry.runId} />
+                        <TradeTable trades={merged.trades} loading={false} />
                       </div>
                     )}
 
@@ -402,6 +421,34 @@ export default function HistoryPanel({}: HistoryPanelProps) {
           })}
         </div>
       )}
+      <AlertDialog
+        open={pendingDeleteEntry !== null}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingStrategy) {
+            setPendingDeleteEntry(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('history.delete')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('history.deleteConfirm')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingStrategy}>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeletingStrategy || !pendingDeleteEntry}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!pendingDeleteEntry || isDeletingStrategy) return;
+                void handleDeleteStrategy(pendingDeleteEntry);
+              }}
+            >
+              {t('history.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
