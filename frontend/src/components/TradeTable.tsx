@@ -7,6 +7,7 @@ interface TradeTableProps {
   selectedTrade?: TradeRecord | null;
   onTradeHover?: (trade: TradeRecord | null) => void;
   onTradeSelect?: (trade: TradeRecord) => void;
+  onTableLeave?: () => void;
 }
 
 function SkeletonRow() {
@@ -31,6 +32,7 @@ export default function TradeTable({
   selectedTrade,
   onTradeHover,
   onTradeSelect,
+  onTableLeave,
 }: TradeTableProps) {
   const { t, locale } = useI18n();
 
@@ -70,7 +72,13 @@ export default function TradeTable({
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
-      <div className="max-h-[300px] overflow-y-auto" onMouseLeave={() => onTradeHover?.(null)}>
+      <div
+        className="max-h-[300px] overflow-y-auto"
+        onMouseLeave={() => {
+          onTradeHover?.(null);
+          onTableLeave?.();
+        }}
+      >
         <table className="w-full">
           <thead className="sticky top-0 bg-card z-10">
             <tr className="border-b border-border">

@@ -105,6 +105,10 @@ export default function SimulationResult({
         onTradeSelect={(trade) => {
           setPinnedTrade((prev) => (getTradeKey(prev) === getTradeKey(trade) ? null : trade));
         }}
+        onTableLeave={() => {
+          setHoveredTrade(null);
+          setPinnedTrade(null);
+        }}
       />
     </div>
   );

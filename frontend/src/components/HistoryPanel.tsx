@@ -264,7 +264,21 @@ export default function HistoryPanel({}: HistoryPanelProps) {
   if (loading) {
     return (
       <div className="border-t border-border pt-8 mt-8">
-        <div className="h-4 w-32 bg-muted rounded animate-pulse" />
+        <button
+          type="button"
+          className="flex items-center gap-2 mb-4 text-foreground"
+          aria-label={t('history.title')}
+        >
+          <ChevronDown className="w-4 h-4" />
+          <h2 className="text-sm font-semibold text-foreground">{t('history.title')}</h2>
+          <span className="text-xs text-muted-foreground ml-auto">
+            <span className="inline-block h-3 w-14 bg-muted rounded animate-pulse align-middle" />
+          </span>
+        </button>
+        <div className="space-y-3">
+          <div className="h-4 w-32 bg-muted rounded animate-pulse" />
+          <div className="h-20 w-full bg-muted/60 rounded-lg animate-pulse" />
+        </div>
       </div>
     );
   }
@@ -416,6 +430,10 @@ export default function HistoryPanel({}: HistoryPanelProps) {
                               const next = getTradeKey(current) === getTradeKey(trade) ? null : trade;
                               return { ...prev, [entry.runId]: next };
                             });
+                          }}
+                          onTableLeave={() => {
+                            setHoveredTradeByRunId((prev) => ({ ...prev, [entry.runId]: null }));
+                            setPinnedTradeByRunId((prev) => ({ ...prev, [entry.runId]: null }));
                           }}
                         />
                       </div>
