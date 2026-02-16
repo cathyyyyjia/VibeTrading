@@ -307,11 +307,19 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
     };
   }, [selectedTrade, rows, buyColor, sellColor]);
 
+  const selectedTooltipRow = useMemo(() => {
+    if (!selectedTrade) return null;
+    const rawTs = selectedTrade.timestamp || selectedTrade.exitTime || selectedTrade.entryTime || "";
+    const day = toDay(rawTs);
+    if (!day) return null;
+    return rows.find((x) => x.day === day) ?? null;
+  }, [selectedTrade, rows]);
+
   const renderTooltip = useCallback(
     ({ active, payload }: any) => {
-      if (!active || !payload?.length) return null;
-      const lineEntry = payload.find((p: any) => p?.dataKey === "returnPct" && p?.value !== undefined);
-      const row = (lineEntry?.payload ?? payload[0]?.payload) as ChartRow | undefined;
+      const lineEntry = payload?.find((p: any) => p?.dataKey === "returnPct" && p?.value !== undefined);
+      const hoveredRow = (lineEntry?.payload ?? payload?.[0]?.payload) as ChartRow | undefined;
+      const row = active && hoveredRow ? hoveredRow : selectedTooltipRow ?? undefined;
       if (!row) return null;
 
       return (
@@ -328,7 +336,7 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
         </div>
       );
     },
-    [locale]
+    [locale, selectedTooltipRow]
   );
 
   return (
@@ -392,6 +400,7 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
             />
 
             <Tooltip
+              active={selectedTradeMarker ? true : undefined}
               cursor={{ stroke: isDark ? "#71717a" : "#94a3b8", strokeDasharray: "3 3", strokeOpacity: 0.75 }}
               content={renderTooltip}
             />
@@ -422,19 +431,6 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
             />
           </ComposedChart>
         </ResponsiveContainer>
-        {selectedTradeMarker ? (
-          <div
-            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-sm"
-            style={{ borderLeftColor: selectedTradeMarker.color, borderLeftWidth: 2 }}
-          >
-            <div className="font-medium">{formatDateByLocale(selectedTradeMarker.day, locale)}</div>
-            <div>
-              {locale === "zh"
-                ? `${selectedTradeMarker.action === "buy" ? "买入" : "卖出"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`
-                : `${selectedTradeMarker.action === "buy" ? "Buy" : "Sell"} ${selectedTradeMarker.symbol} ${Number.isFinite(selectedTradeMarker.price) ? `$${selectedTradeMarker.price.toFixed(2)}` : "-"}`}
-            </div>
-          </div>
-        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
