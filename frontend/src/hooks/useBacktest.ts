@@ -131,7 +131,7 @@ export function useBacktest(): UseBacktestReturn {
 
         setSteps(statusData.steps);
         const runningStep = statusData.steps.find((s) => s.status === "running");
-        let displayProgress = progress;
+        let displayProgress = 0;
         if (runningStep?.key === "backtest") {
           const latestLog = [...runningStep.logs].reverse().find((log) => log.includes("Backtesting ")) || "";
           const m = latestLog.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
@@ -219,7 +219,7 @@ export function useBacktest(): UseBacktestReturn {
         }
       }
     },
-    [progress, stopPolling, stopRealtime]
+    [stopPolling, stopRealtime]
   );
 
   const subscribeRealtime = useCallback(

@@ -146,11 +146,11 @@ function SubtaskList({ step }: { step: StepInfo }) {
   );
 }
 
-function BacktestProgress({ step, progress }: { step: StepInfo; progress: number }) {
+function BacktestProgress({ step }: { step: StepInfo }) {
   const latest = [...step.logs].reverse().find((log) => log.includes("Backtesting "));
   const m = latest?.match(/Backtesting\s+(\d{4}-\d{2}-\d{2})\s+\((\d+)\/(\d+),\s*([\d.]+)%\)/);
   const pctFromLog = m ? Number(m[4]) : Number.NaN;
-  const pct = step.status === "done" ? 100 : Number.isFinite(pctFromLog) ? pctFromLog : progress;
+  const pct = step.status === "done" ? 100 : Number.isFinite(pctFromLog) ? pctFromLog : 0;
 
   const safePct = Math.max(0, Math.min(100, pct));
 
@@ -217,7 +217,7 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
         {isActive && (
           <div className="ml-[30px]">
             {step.key === "backtest" && step.status !== "error" && (
-              <BacktestProgress step={step} progress={progress} />
+              <BacktestProgress step={step} />
             )}
             <SubtaskList step={step} />
           </div>
