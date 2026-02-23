@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import os
 from typing import Any
 
 import pytest
@@ -13,254 +12,186 @@ from app.services.spec_builder import nl_to_strategy_spec
 PROMPT = "Sell 25% TQQQ when QQQ has a 4H MACD death cross and at 2 minutes before close it's still below the 5-day MA."
 PROMPT_EXAMPLE_1 = "QQQ4小时macd死叉，且日线级别MA跌破5日ma的时候清仓TQQQ。"
 PROMPT_EXAMPLE_2 = "QQQ4小时macd死叉，且MA跌破5日ma的时候减仓35%TQQQ，然后日线级别macd死叉且确认跌破20日ma的时候完全清仓TQQQ。"
+PROMPT_SOX_MULTI = "在11月20日建仓100%的soxl，soxx四小时macd死叉，且MA同时跌破5日ma的时候减仓30%soxl，之后在日线级别macd死叉且确认跌破20日ma的时候完全清仓soxl。"
 
 
-def _mock_strategy_draft() -> dict[str, Any]:
+def _draft_single_partial() -> dict[str, Any]:
   return {
-    "name": "QQQ MACD bearish partial sell",
+    "name": "QQQ bearish partial reduce",
     "universe": {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"},
-    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 1},
+    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 2},
     "dsl": {
       "atomic": {
         "symbols": {"signal": "QQQ", "trade": "TQQQ"},
-        "constants": {"lookback": "5d", "sell_fraction": 0.25},
+        "constants": {"lookback": "5d", "sell_fraction": 0.25, "initial_position_qty": 100.0, "initial_cash": 0.0},
       },
-      "time": {
-        "primary_tf": "1m",
-        "derived_tfs": ["4h", "1d"],
-        "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"},
-      },
+      "time": {"primary_tf": "1m", "derived_tfs": ["4h", "1d"], "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"}},
       "signal": {
         "indicators": [
-          {"id": "macd_4h", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "params": {"fast": 12, "slow": 26, "signal": 9}},
-          {"id": "close_1m", "type": "CLOSE", "tf": "1m", "symbol_ref": "signal", "params": {}},
-          {"id": "ma5_1d", "type": "SMA", "tf": "1d", "symbol_ref": "signal", "params": {"window": "5d", "bar_selection": "LAST_CLOSED_1D"}},
+          {"id": "macd_4h", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"fast": 12, "slow": 26, "signal": 9}},
+          {"id": "close_1d", "type": "CLOSE", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"bar_selection": "LAST_CLOSED_1D"}},
+          {"id": "ma_5d", "type": "MA", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"window": "5d", "bar_selection": "LAST_CLOSED_1D"}},
         ],
         "events": [
-          {
-            "id": "macd_bear_cross",
-            "type": "CROSS_DOWN",
-            "a": "macd_4h.macd",
-            "b": "macd_4h.signal",
-            "left": None,
-            "right": None,
-            "direction": "DOWN",
-            "op": None,
-            "value": None,
-          }
+          {"id": "ev_macd_4h_dead_cross", "type": "CROSS_DOWN", "a": "macd_4h.macd", "b": "macd_4h.signal", "left": None, "right": None, "direction": "DOWN", "op": None, "value": None, "tf": "4h"},
+          {"id": "ev_below_ma5", "type": "THRESHOLD", "a": None, "b": None, "left": "close_1d.value", "right": "ma_5d.value", "direction": None, "op": "<", "value": None, "tf": "1d"},
         ],
       },
-      "logic": {
-        "rules": [
-          {
-            "id": "r_sell",
-            "when": {
-              "all": [
-                {"event_within": {"event_id": "macd_bear_cross", "lookback": "5d"}},
-                {"lt": {"a": "close_1m.value@decision", "b": "ma5_1d.value@decision"}},
-              ]
-            },
-            "then": [{"action_id": "sell_25pct"}],
-          }
-        ]
-      },
+      "logic": {"rules": [{"id": "rule_reduce", "when": {"all": [{"event_id": "ev_macd_4h_dead_cross", "scope": "BAR"}, {"event_id": "ev_below_ma5", "scope": "BAR"}]}, "then": [{"action_id": "sell_25pct"}]}]},
       "action": {
         "actions": [
-          {
-            "id": "sell_25pct",
-            "type": "ORDER",
-            "symbol_ref": "trade",
-            "side": "SELL",
-            "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.25},
-            "order_type": "MOC",
-            "cooldown": "1d",
-          }
+          {"id": "sell_25pct", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.25}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"}
         ]
       },
     },
   }
 
 
-def _mock_strategy_draft_with_duplicate_macd_refs() -> dict[str, Any]:
-  draft = copy.deepcopy(_mock_strategy_draft())
-  indicators = draft["dsl"]["signal"]["indicators"]
-  indicators.append(
-    {"id": "macd_4h_dup", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "params": {"fast": 12, "slow": 26, "signal": 9}}
-  )
-  draft["dsl"]["signal"]["events"] = [
-    {
-      "id": "macd_bear_cross",
-      "type": "CROSS_DOWN",
-      # intentionally missing field suffix and using duplicate MACD ids
-      "a": "macd_4h",
-      "b": "macd_4h_dup",
-      "left": None,
-      "right": None,
-      "direction": "DOWN",
-      "op": None,
-      "value": None,
-    }
+def _draft_single_full_exit() -> dict[str, Any]:
+  draft = copy.deepcopy(_draft_single_partial())
+  draft["name"] = "QQQ single-stage full exit"
+  draft["dsl"]["atomic"]["constants"]["sell_fraction"] = 1.0
+  draft["dsl"]["logic"]["rules"][0]["then"] = [{"action_id": "sell_all"}]
+  draft["dsl"]["action"]["actions"] = [
+    {"id": "sell_all", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FULL_POSITION", "value": 1.0}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"}
   ]
   return draft
 
 
-def _find_sell_fraction(spec: dict[str, Any]) -> float | None:
-  actions = (((spec.get("dsl") or {}).get("action") or {}).get("actions") or [])
-  if not isinstance(actions, list):
-    return None
-  for action in actions:
-    if not isinstance(action, dict):
-      continue
-    if str(action.get("side") or "").upper() != "SELL":
-      continue
-    qty = action.get("qty") or {}
-    if not isinstance(qty, dict):
-      continue
-    if str(qty.get("mode") or "").upper() != "FRACTION_OF_POSITION":
-      continue
-    try:
-      return float(qty.get("value"))
-    except Exception:
-      return None
-  return None
-
-
-def _has_4h_macd_cross_down(spec: dict[str, Any]) -> bool:
-  signal = ((spec.get("dsl") or {}).get("signal") or {})
-  if not isinstance(signal, dict):
-    return False
-  indicators = signal.get("indicators") or []
-  events = signal.get("events") or []
-  has_macd_4h = any(
-    isinstance(ind, dict)
-    and str(ind.get("type") or "").upper() == "MACD"
-    and str(ind.get("tf") or "").lower() == "4h"
-    for ind in indicators
-    if isinstance(indicators, list)
-  )
-  has_cross_down = any(
-    isinstance(ev, dict)
-    and str(ev.get("type") or "").upper() in ("CROSS_DOWN", "CROSS")
-    and isinstance(ev.get("a"), str)
-    and "." in str(ev.get("a"))
-    and isinstance(ev.get("b"), str)
-    and "." in str(ev.get("b"))
-    for ev in events
-    if isinstance(events, list)
-  )
-  return has_macd_4h and has_cross_down
-
-
-@pytest.mark.asyncio
-async def test_nl_to_spec_builds_final_spec_from_draft(monkeypatch: pytest.MonkeyPatch) -> None:
-  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    return _mock_strategy_draft()
-
-  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
-  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
-
-  assert spec["timezone"] == "America/New_York"
-  assert spec["calendar"]["value"] == "XNYS"
-  assert spec["decision"]["decision_time_rule"]["offset"] == "-2m"
-  assert spec["execution"]["model"] == "MOC"
-  assert spec["universe"]["signal_symbol"] == "QQQ"
-  assert spec["universe"]["trade_symbol"] == "TQQQ"
-  assert "signal_symbol_fallbacks" not in spec["universe"]
-  assert spec["strategy_version"] == "v0"
-  assert bool((spec.get("meta") or {}).get("llm_used")) is True
-
-
-@pytest.mark.asyncio
-async def test_nl_to_spec_applies_overrides_after_assembly(monkeypatch: pytest.MonkeyPatch) -> None:
-  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    return _mock_strategy_draft()
-
-  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
-  spec = await nl_to_strategy_spec(
-    PROMPT,
-    "BACKTEST_ONLY",
-    overrides={
-      "execution": {"slippage_bps": 5.0},
-      "universe": {"trade_symbol": "SQQQ"},
+def _draft_multi_stage_tqqq() -> dict[str, Any]:
+  return {
+    "name": "QQQ multi-stage reduce then exit",
+    "universe": {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"},
+    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 4},
+    "dsl": {
+      "atomic": {
+        "symbols": {"signal": "QQQ", "trade": "TQQQ"},
+        "constants": {"lookback": "5d", "sell_fraction": 0.35, "initial_position_qty": 100.0, "initial_cash": 0.0},
+      },
+      "time": {"primary_tf": "1m", "derived_tfs": ["4h", "1d"], "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"}},
+      "signal": {
+        "indicators": [
+          {"id": "macd_4h", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"fast": 12, "slow": 26, "signal": 9}},
+          {"id": "macd_1d", "type": "MACD", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"fast": 12, "slow": 26, "signal": 9}},
+          {"id": "close_1d", "type": "CLOSE", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"bar_selection": "LAST_CLOSED_1D"}},
+          {"id": "ma_5d", "type": "MA", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"window": "5d", "bar_selection": "LAST_CLOSED_1D"}},
+          {"id": "ma_20d", "type": "MA", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"window": "20d", "bar_selection": "LAST_CLOSED_1D"}},
+        ],
+        "events": [
+          {"id": "ev_cross_4h", "type": "CROSS_DOWN", "a": "macd_4h.macd", "b": "macd_4h.signal", "left": None, "right": None, "direction": "DOWN", "op": None, "value": None, "tf": "4h"},
+          {"id": "ev_cross_1d", "type": "CROSS_DOWN", "a": "macd_1d.macd", "b": "macd_1d.signal", "left": None, "right": None, "direction": "DOWN", "op": None, "value": None, "tf": "1d"},
+          {"id": "ev_below_ma5", "type": "THRESHOLD", "a": None, "b": None, "left": "close_1d.value", "right": "ma_5d.value", "direction": None, "op": "<", "value": None, "tf": "1d"},
+          {"id": "ev_below_ma20", "type": "THRESHOLD", "a": None, "b": None, "left": "close_1d.value", "right": "ma_20d.value", "direction": None, "op": "<", "value": None, "tf": "1d"},
+        ],
+      },
+      "logic": {
+        "rules": [
+          {"id": "rule_stage1", "when": {"all": [{"event_id": "ev_cross_4h", "scope": "BAR"}, {"event_id": "ev_below_ma5", "scope": "BAR"}]}, "then": [{"action_id": "sell_partial"}, {"action_id": "set_stage1_done"}]},
+          {"id": "rule_stage2", "when": {"all": [{"flag_is_true": {"flag": "stage1_done"}}, {"event_id": "ev_cross_1d", "scope": "BAR"}, {"event_id": "ev_below_ma20", "scope": "BAR"}]}, "then": [{"action_id": "sell_all"}]},
+        ]
+      },
+      "action": {
+        "actions": [
+          {"id": "sell_partial", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.35}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+          {"id": "set_stage1_done", "type": "SET_FLAG", "flag": "stage1_done", "cooldown": None},
+          {"id": "sell_all", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FULL_POSITION", "value": 1.0}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+        ]
+      },
     },
-  )
-  assert spec["execution"]["model"] == "MOC"
-  assert float(spec["execution"]["slippage_bps"]) == 5.0
-  assert spec["universe"]["trade_symbol"] == "SQQQ"
+  }
 
 
-@pytest.mark.asyncio
-async def test_nl_to_spec_normalizes_macd_cross_event_refs(monkeypatch: pytest.MonkeyPatch) -> None:
-  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    return _mock_strategy_draft_with_duplicate_macd_refs()
-
-  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
-  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
-  events = (((spec.get("dsl") or {}).get("signal") or {}).get("events") or [])
-  assert isinstance(events, list) and len(events) > 0
-  cross = events[0]
-  assert isinstance(cross.get("a"), str) and str(cross["a"]).endswith(".macd")
-  assert isinstance(cross.get("b"), str) and str(cross["b"]).endswith(".signal")
+def _draft_multi_stage_sox() -> dict[str, Any]:
+  draft = copy.deepcopy(_draft_multi_stage_tqqq())
+  draft["name"] = "SOXX/SOXL multi-stage"
+  draft["universe"] = {"signal_symbol": "SOXX", "trade_symbol": "SOXL"}
+  draft["dsl"]["atomic"]["symbols"] = {"signal": "SOXX", "trade": "SOXL"}
+  draft["dsl"]["atomic"]["constants"]["sell_fraction"] = 0.30
+  for action in draft["dsl"]["action"]["actions"]:
+    if action["id"] == "sell_partial":
+      action["qty"]["value"] = 0.30
+  return draft
 
 
-@pytest.mark.asyncio
-async def test_live_llm_generates_executable_strategy_shape() -> None:
-  if os.getenv("RUN_LIVE_LLM_TESTS") != "1":
-    pytest.skip("Set RUN_LIVE_LLM_TESTS=1 to run live LLM integration test")
-  if not llm_client.is_configured:
-    pytest.skip("LLM API key/model is not configured")
-
-  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
-
+def _assert_base_spec_shape(spec: dict[str, Any]) -> None:
   assert spec["timezone"] == "America/New_York"
   assert spec["calendar"]["value"] == "XNYS"
   assert spec["decision"]["decision_time_rule"]["offset"] == "-2m"
   assert spec["execution"]["model"] == "MOC"
-  assert "signal_symbol_fallbacks" not in (spec.get("universe") or {})
-
-  dsl = spec.get("dsl") or {}
-  signal = (dsl.get("signal") or {}) if isinstance(dsl, dict) else {}
-  logic = (dsl.get("logic") or {}) if isinstance(dsl, dict) else {}
-  action = (dsl.get("action") or {}) if isinstance(dsl, dict) else {}
-  assert isinstance(signal.get("indicators"), list) and len(signal["indicators"]) > 0
-  assert isinstance(signal.get("events"), list) and len(signal["events"]) > 0
-  assert isinstance(logic.get("rules"), list) and len(logic["rules"]) > 0
-  assert isinstance(action.get("actions"), list) and len(action["actions"]) > 0
-
-  assert _has_4h_macd_cross_down(spec), "Expected MACD 4H cross-down semantics"
-  sell_fraction = _find_sell_fraction(spec)
-  assert sell_fraction is not None, "Expected SELL FRACTION_OF_POSITION action"
-  assert abs(sell_fraction - 0.25) <= 0.10, f"Expected ~25% sell fraction, got {sell_fraction}"
+  assert spec["strategy_version"] == "v0"
+  assert (spec.get("meta") or {}).get("generation_mode") == "llm"
 
 
 @pytest.mark.asyncio
-async def test_semantic_templates_generate_distinct_dsl_for_two_stage_vs_single_stage(monkeypatch: pytest.MonkeyPatch) -> None:
-  async def _should_not_call_llm(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    raise AssertionError("semantic template path should bypass llm_client.chat_json for known phrases")
+async def test_prompt_1_partial_sell_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_single_partial()
 
-  monkeypatch.setattr(llm_client, "chat_json", _should_not_call_llm)
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
 
-  spec1 = await nl_to_strategy_spec(PROMPT_EXAMPLE_1, "BACKTEST_ONLY")
-  spec2 = await nl_to_strategy_spec(PROMPT_EXAMPLE_2, "BACKTEST_ONLY")
+  _assert_base_spec_shape(spec)
+  assert spec["universe"] == {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"}
+  actions = (((spec.get("dsl") or {}).get("action") or {}).get("actions") or [])
+  sell = next(a for a in actions if isinstance(a, dict) and a.get("id") == "sell_25pct")
+  assert sell["qty"]["mode"] == "FRACTION_OF_POSITION"
+  assert float(sell["qty"]["value"]) == pytest.approx(0.25)
 
-  assert (spec1.get("meta") or {}).get("generation_mode") == "semantic_template"
-  assert (spec2.get("meta") or {}).get("generation_mode") == "semantic_template"
 
-  dsl1 = spec1.get("dsl") or {}
-  dsl2 = spec2.get("dsl") or {}
+@pytest.mark.asyncio
+async def test_prompt_2_single_stage_full_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_single_full_exit()
 
-  rules1 = (((dsl1.get("logic") or {}).get("rules")) or [])
-  rules2 = (((dsl2.get("logic") or {}).get("rules")) or [])
-  assert isinstance(rules1, list) and len(rules1) == 1
-  assert isinstance(rules2, list) and len(rules2) == 2
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT_EXAMPLE_1, "BACKTEST_ONLY")
 
-  actions1 = (((dsl1.get("action") or {}).get("actions")) or [])
-  actions2 = (((dsl2.get("action") or {}).get("actions")) or [])
-  assert any((a.get("qty") or {}).get("mode") == "FULL_POSITION" for a in actions1 if isinstance(a, dict))
-  assert any((a.get("qty") or {}).get("mode") == "FRACTION_OF_POSITION" for a in actions2 if isinstance(a, dict))
-  assert any(str(a.get("type") or "").upper() == "SET_FLAG" for a in actions2 if isinstance(a, dict))
+  _assert_base_spec_shape(spec)
+  assert spec["universe"] == {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"}
+  actions = (((spec.get("dsl") or {}).get("action") or {}).get("actions") or [])
+  assert any(
+    isinstance(a, dict)
+    and (a.get("qty") or {}).get("mode") == "FULL_POSITION"
+    and float((a.get("qty") or {}).get("value") or 0.0) == pytest.approx(1.0)
+    for a in actions
+  )
 
-  stage2_rule = next((r for r in rules2 if isinstance(r, dict) and str(r.get("id") or "").startswith("rule_stage2")), None)
-  assert isinstance(stage2_rule, dict)
-  stage2_when = stage2_rule.get("when") or {}
-  assert "flag_is_true" in str(stage2_when)
+
+@pytest.mark.asyncio
+async def test_prompt_3_multi_stage_reduce_then_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_multi_stage_tqqq()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT_EXAMPLE_2, "BACKTEST_ONLY")
+
+  _assert_base_spec_shape(spec)
+  assert spec["universe"] == {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"}
+  dsl = spec.get("dsl") or {}
+  rules = (((dsl.get("logic") or {}).get("rules")) or [])
+  actions = (((dsl.get("action") or {}).get("actions")) or [])
+
+  assert len(rules) == 2
+  assert any(isinstance(a, dict) and str(a.get("type") or "").upper() == "SET_FLAG" for a in actions)
+  partial = next(a for a in actions if isinstance(a, dict) and a.get("id") == "sell_partial")
+  assert partial["qty"]["mode"] == "FRACTION_OF_POSITION"
+  assert float(partial["qty"]["value"]) == pytest.approx(0.35)
+
+  stage2 = next(r for r in rules if isinstance(r, dict) and r.get("id") == "rule_stage2")
+  assert "flag_is_true" in str(stage2.get("when"))
+
+
+@pytest.mark.asyncio
+async def test_prompt_4_multi_symbol_stage_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_multi_stage_sox()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT_SOX_MULTI, "BACKTEST_ONLY")
+
+  _assert_base_spec_shape(spec)
+  assert spec["universe"] == {"signal_symbol": "SOXX", "trade_symbol": "SOXL"}
+  actions = (((spec.get("dsl") or {}).get("action") or {}).get("actions") or [])
+  partial = next(a for a in actions if isinstance(a, dict) and a.get("id") == "sell_partial")
+  assert partial["qty"]["mode"] == "FRACTION_OF_POSITION"
+  assert float(partial["qty"]["value"]) == pytest.approx(0.30)

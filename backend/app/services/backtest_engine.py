@@ -143,6 +143,18 @@ def _safe_float(value: Any) -> float | None:
   return None
 
 
+def _parse_iso_date(raw: Any) -> datetime.date | None:
+  if not isinstance(raw, str):
+    return None
+  text = raw.strip()
+  if not text:
+    return None
+  try:
+    return datetime.fromisoformat(text).date()
+  except Exception:
+    return None
+
+
 def _read_int_pref(source: dict[str, Any], keys: list[str], default: int) -> int:
   for key in keys:
     raw = source.get(key)
@@ -713,6 +725,25 @@ async def run_backtest_from_spec(
     if "flag_is_true" in cond and isinstance(cond.get("flag_is_true"), dict):
       flag_name = str((cond.get("flag_is_true") or {}).get("flag") or "").strip()
       return bool(flag_name) and bool(state_flags.get(flag_name))
+    if "on_month_day" in cond and isinstance(cond.get("on_month_day"), dict):
+      gate = cond.get("on_month_day") or {}
+      month_raw = gate.get("month")
+      day_raw = gate.get("day")
+      if not isinstance(month_raw, int) or not isinstance(day_raw, int):
+        return False
+      if session_idx < 0 or session_idx >= len(session_rows):
+        return False
+      d = session_rows[session_idx]["session_close"].date()
+      return d.month == month_raw and d.day == day_raw
+    if "on_date" in cond and isinstance(cond.get("on_date"), dict):
+      gate = cond.get("on_date") or {}
+      target_date = _parse_iso_date(gate.get("date"))
+      if target_date is None:
+        return False
+      if session_idx < 0 or session_idx >= len(session_rows):
+        return False
+      d = session_rows[session_idx]["session_close"].date()
+      return d == target_date
     if "lt" in cond and isinstance(cond.get("lt"), dict):
       left = _resolve_operand(cond["lt"].get("a"), session_idx)
       right = _resolve_operand(cond["lt"].get("b"), session_idx)
