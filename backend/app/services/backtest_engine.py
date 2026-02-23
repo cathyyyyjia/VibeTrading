@@ -400,8 +400,9 @@ async def run_backtest_from_spec(
     return daily_trade_close if resolved == trade_symbol else daily_signal_close
 
   idx4h_by_session: list[int | None] = [last_closed_4h_idx(row["decision_ts"]) for row in session_rows]
+  idx1d_by_session: list[int | None] = [i - 1 if i > 0 else None for i in range(len(session_rows))]
   decision_indicator_values: list[dict[str, dict[str, float | None]]] = [{} for _ in session_rows]
-  indicator_4h_series: dict[str, dict[str, list[float]]] = {}
+  indicator_tf_series: dict[str, dict[str, Any]] = {}
 
   def _resolve_operand(operand: Any, session_idx: int) -> float | None:
     if isinstance(operand, (int, float)):
@@ -431,17 +432,19 @@ async def run_backtest_from_spec(
         params = {}
 
       values: dict[str, float | None]
-      if ind_type == "MACD" and tf == "4h":
+      if ind_type == "MACD" and tf in ("4h", "1d"):
         fast = _read_int_pref(params, ["fast"], indicator_defaults["macd_fast"])
         slow = _read_int_pref(params, ["slow"], indicator_defaults["macd_slow"])
         signal_n = _read_int_pref(params, ["signal"], indicator_defaults["macd_signal"])
-        macd_line, signal_line = _macd(four_h_closes, fast, slow, signal_n)
-        indicator_4h_series[ind_id] = {"macd": macd_line, "signal": signal_line}
-        for i, idx4h in enumerate(idx4h_by_session):
+        source_series = four_h_closes if tf == "4h" else _daily_series(symbol_ref)
+        macd_line, signal_line = _macd(source_series, fast, slow, signal_n)
+        indicator_tf_series[ind_id] = {"tf": tf, "series": {"macd": macd_line, "signal": signal_line}}
+        idx_by_session = idx4h_by_session if tf == "4h" else idx1d_by_session
+        for i, idx_tf in enumerate(idx_by_session):
           values = {"macd": None, "signal": None, "value": None}
-          if idx4h is not None and idx4h < len(macd_line):
-            values["macd"] = float(macd_line[idx4h])
-            values["signal"] = float(signal_line[idx4h]) if idx4h < len(signal_line) else None
+          if idx_tf is not None and idx_tf < len(macd_line):
+            values["macd"] = float(macd_line[idx_tf])
+            values["signal"] = float(signal_line[idx_tf]) if idx_tf < len(signal_line) else None
             values["value"] = values["macd"]
           decision_indicator_values[i][ind_id] = values
       elif ind_type in ("SMA", "MA") and tf == "1d":
@@ -495,14 +498,20 @@ async def run_backtest_from_spec(
         b_ref = _read_ref(ev.get("b")) or _read_ref(ev.get("right")) or ""
         a_id, a_field = _normalize_ref(a_ref)
         b_id, b_field = _normalize_ref(b_ref)
-        a_series = (indicator_4h_series.get(a_id) or {}).get(a_field)
-        b_series = (indicator_4h_series.get(b_id) or {}).get(b_field)
-        if isinstance(a_series, list) and isinstance(b_series, list):
-          for i, idx4h in enumerate(idx4h_by_session):
-            if idx4h is None or idx4h <= 0 or idx4h >= len(a_series) or idx4h >= len(b_series):
+        a_meta = indicator_tf_series.get(a_id) or {}
+        b_meta = indicator_tf_series.get(b_id) or {}
+        a_series = ((a_meta.get("series") or {}) if isinstance(a_meta, dict) else {}).get(a_field)
+        b_series = ((b_meta.get("series") or {}) if isinstance(b_meta, dict) else {}).get(b_field)
+        event_tf = str(ev.get("tf") or "").strip().lower()
+        selected_tf = event_tf or str(a_meta.get("tf") or b_meta.get("tf") or "").lower()
+        idx_by_session = idx4h_by_session if selected_tf == "4h" else idx1d_by_session if selected_tf == "1d" else None
+
+        if isinstance(a_series, list) and isinstance(b_series, list) and isinstance(idx_by_session, list):
+          for i, idx_tf in enumerate(idx_by_session):
+            if idx_tf is None or idx_tf <= 0 or idx_tf >= len(a_series) or idx_tf >= len(b_series):
               continue
-            a_prev, a_cur = a_series[idx4h - 1], a_series[idx4h]
-            b_prev, b_cur = b_series[idx4h - 1], b_series[idx4h]
+            a_prev, a_cur = a_series[idx_tf - 1], a_series[idx_tf]
+            b_prev, b_cur = b_series[idx_tf - 1], b_series[idx_tf]
             cross_down = a_prev >= b_prev and a_cur < b_cur
             cross_up = a_prev <= b_prev and a_cur > b_cur
             if direction == "DOWN":
@@ -554,6 +563,9 @@ async def run_backtest_from_spec(
       lookback = _parse_lookback_days(scope if scope else constants.get("lookback"), default=1)
       start_idx = max(0, session_idx - lookback + 1)
       return any(hits[start_idx : session_idx + 1])
+    if "flag_is_true" in cond and isinstance(cond.get("flag_is_true"), dict):
+      flag_name = str((cond.get("flag_is_true") or {}).get("flag") or "").strip()
+      return bool(flag_name) and bool(state_flags.get(flag_name))
     if "lt" in cond and isinstance(cond.get("lt"), dict):
       left = _resolve_operand(cond["lt"].get("a"), session_idx)
       right = _resolve_operand(cond["lt"].get("b"), session_idx)
@@ -590,6 +602,7 @@ async def run_backtest_from_spec(
 
   trades: list[dict[str, Any]] = []
   equity: list[dict[str, Any]] = []
+  state_flags: dict[str, bool] = {}
   action_last_exec: dict[str, int] = {}
   rules = logic_layer.get("rules") if isinstance(logic_layer, dict) else None
   rules_list = rules if isinstance(rules, list) else []
@@ -624,6 +637,14 @@ async def run_backtest_from_spec(
         if last_idx is not None and i - last_idx < cooldown_days:
           continue
 
+        action_type = str(action.get("type") or "ORDER").upper()
+        if action_type == "SET_FLAG":
+          flag_name = str(action.get("flag") or action.get("value") or "").strip()
+          if flag_name:
+            state_flags[flag_name] = True
+            action_last_exec[action_id] = i
+          continue
+
         side = str(action.get("side") or "SELL").upper()
         symbol_ref = str(action.get("symbol_ref") or "trade")
         symbol = symbol_refs.get(symbol_ref, trade_symbol)
@@ -638,7 +659,9 @@ async def run_backtest_from_spec(
 
         qty = 0.0
         if side == "SELL":
-          if mode == "FRACTION_OF_POSITION":
+          if mode == "FULL_POSITION":
+            qty = float(int(position_qty))
+          elif mode == "FRACTION_OF_POSITION":
             qty = float(int(position_qty * qty_val))
           elif mode in ("FIXED", "FIXED_SHARES", "SHARES", "ABSOLUTE"):
             qty = float(int(qty_val))
@@ -648,7 +671,9 @@ async def run_backtest_from_spec(
             qty = float(int(qty_val))
           qty = min(qty, position_qty)
         elif side == "BUY":
-          if mode in ("FRACTION_OF_CASH", "FRACTION_OF_EQUITY"):
+          if mode == "FULL_POSITION":
+            qty = float(int(max(cash - commission_per_trade, 0.0) / fill_px_raw)) if fill_px_raw > 0 else 0.0
+          elif mode in ("FRACTION_OF_CASH", "FRACTION_OF_EQUITY"):
             budget = cash * max(0.0, qty_val)
             qty = float(int(budget / fill_px_raw)) if fill_px_raw > 0 else 0.0
           elif mode == "NOTIONAL_USD":

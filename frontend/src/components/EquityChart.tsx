@@ -274,10 +274,6 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
 
   const bands = useMemo(() => buildPositionBands(rows), [rows]);
   const [yMin, yMax] = useMemo(() => computeYDomain(rows), [rows]);
-
-  if (loading) return <SkeletonChart />;
-  if (rows.length === 0) return null;
-
   const curveColor = isDark ? "#e4e4e7" : "#111111";
   const buyColor = palette.up;
   const sellColor = palette.down;
@@ -327,6 +323,9 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
     if (!day) return null;
     return rows.find((x) => x.day === day) ?? null;
   }, [selectedTrade, rows]);
+
+  if (loading) return <SkeletonChart />;
+  if (rows.length === 0) return null;
 
   const renderTooltip = useCallback(
     ({ active, payload }: any) => {

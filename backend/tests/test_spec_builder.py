@@ -11,6 +11,8 @@ from app.services.spec_builder import nl_to_strategy_spec
 
 
 PROMPT = "Sell 25% TQQQ when QQQ has a 4H MACD death cross and at 2 minutes before close it's still below the 5-day MA."
+PROMPT_EXAMPLE_1 = "QQQ4小时macd死叉，且日线级别MA跌破5日ma的时候清仓TQQQ。"
+PROMPT_EXAMPLE_2 = "QQQ4小时macd死叉，且MA跌破5日ma的时候减仓35%TQQQ，然后日线级别macd死叉且确认跌破20日ma的时候完全清仓TQQQ。"
 
 
 def _mock_strategy_draft() -> dict[str, Any]:
@@ -229,3 +231,36 @@ async def test_live_llm_generates_executable_strategy_shape() -> None:
   sell_fraction = _find_sell_fraction(spec)
   assert sell_fraction is not None, "Expected SELL FRACTION_OF_POSITION action"
   assert abs(sell_fraction - 0.25) <= 0.10, f"Expected ~25% sell fraction, got {sell_fraction}"
+
+
+@pytest.mark.asyncio
+async def test_semantic_templates_generate_distinct_dsl_for_two_stage_vs_single_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _should_not_call_llm(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    raise AssertionError("semantic template path should bypass llm_client.chat_json for known phrases")
+
+  monkeypatch.setattr(llm_client, "chat_json", _should_not_call_llm)
+
+  spec1 = await nl_to_strategy_spec(PROMPT_EXAMPLE_1, "BACKTEST_ONLY")
+  spec2 = await nl_to_strategy_spec(PROMPT_EXAMPLE_2, "BACKTEST_ONLY")
+
+  assert (spec1.get("meta") or {}).get("generation_mode") == "semantic_template"
+  assert (spec2.get("meta") or {}).get("generation_mode") == "semantic_template"
+
+  dsl1 = spec1.get("dsl") or {}
+  dsl2 = spec2.get("dsl") or {}
+
+  rules1 = (((dsl1.get("logic") or {}).get("rules")) or [])
+  rules2 = (((dsl2.get("logic") or {}).get("rules")) or [])
+  assert isinstance(rules1, list) and len(rules1) == 1
+  assert isinstance(rules2, list) and len(rules2) == 2
+
+  actions1 = (((dsl1.get("action") or {}).get("actions")) or [])
+  actions2 = (((dsl2.get("action") or {}).get("actions")) or [])
+  assert any((a.get("qty") or {}).get("mode") == "FULL_POSITION" for a in actions1 if isinstance(a, dict))
+  assert any((a.get("qty") or {}).get("mode") == "FRACTION_OF_POSITION" for a in actions2 if isinstance(a, dict))
+  assert any(str(a.get("type") or "").upper() == "SET_FLAG" for a in actions2 if isinstance(a, dict))
+
+  stage2_rule = next((r for r in rules2 if isinstance(r, dict) and str(r.get("id") or "").startswith("rule_stage2")), None)
+  assert isinstance(stage2_rule, dict)
+  stage2_when = stage2_rule.get("when") or {}
+  assert "flag_is_true" in str(stage2_when)
