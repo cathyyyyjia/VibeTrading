@@ -324,9 +324,6 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
     return rows.find((x) => x.day === day) ?? null;
   }, [selectedTrade, rows]);
 
-  if (loading) return <SkeletonChart />;
-  if (rows.length === 0) return null;
-
   const renderTooltip = useCallback(
     ({ active, payload }: any) => {
       const lineEntry = payload?.find((p: any) => p?.dataKey === "returnPct" && p?.value !== undefined);
@@ -350,6 +347,9 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
     },
     [locale, selectedTooltipRow]
   );
+
+  if (loading) return <SkeletonChart />;
+  if (rows.length === 0) return null;
 
   return (
     <div className="border border-border rounded-lg p-4 bg-card space-y-3">
