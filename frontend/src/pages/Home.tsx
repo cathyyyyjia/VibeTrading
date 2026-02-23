@@ -27,6 +27,7 @@ export default function Home() {
     backtestWindowPreset,
     backtestStartDate,
     backtestEndDate,
+    activeRunWindow,
     setPrompt,
     setIndicatorPreferences,
     setBacktestWindowPreset,
@@ -83,6 +84,7 @@ export default function Home() {
             steps={steps}
             progress={progress}
             artifacts={artifacts}
+            activeRunWindow={activeRunWindow}
           />
         </div>
       </div>

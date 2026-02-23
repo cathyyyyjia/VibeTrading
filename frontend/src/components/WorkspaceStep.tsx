@@ -14,6 +14,7 @@ interface WorkspaceStepProps {
   step: StepInfo;
   isLast: boolean;
   progress: number;
+  activeRunWindow?: { startDate: string; endDate: string } | null;
 }
 
 function StatusIcon({ status }: { status: StepStatus }) {
@@ -47,7 +48,7 @@ function normalizeLogMessage(log: string): string {
     .trim();
 }
 
-function localizeSubtask(raw: string, locale: "en" | "zh"): string {
+function localizeSubtask(raw: string, locale: "en" | "zh", activeRunWindow?: { startDate: string; endDate: string } | null): string {
   const line = normalizeLogMessage(raw);
 
   const parseReady = line.match(/^Strategy ready \((?:LLM:\s*([^,]+),\s*)?attempts:\s*(\d+)\)$/i);
@@ -74,8 +75,8 @@ function localizeSubtask(raw: string, locale: "en" | "zh"): string {
 
   const dataReady = line.match(/^Data ready \((\d{4}-\d{2}-\d{2})\s*(?:->|-)\s*(\d{4}-\d{2}-\d{2})\)$/i);
   if (dataReady) {
-    const start = dataReady[1];
-    const end = dataReady[2];
+    const start = activeRunWindow?.startDate || dataReady[1];
+    const end = activeRunWindow?.endDate || dataReady[2];
     if (locale === "zh") return `数据已就绪（${formatDateByLocale(start, "zh")} 至 ${formatDateByLocale(end, "zh")}）`;
     return `Data ready (${start} - ${end})`;
   }
@@ -115,8 +116,12 @@ function inferSubtaskStatus(step: StepInfo, label: string, index: number, total:
   return "done";
 }
 
-function buildSubtasks(step: StepInfo, locale: "en" | "zh"): Array<{ label: string; status: SubtaskStatus }> {
-  const labels = step.logs.map((log) => localizeSubtask(log, locale)).filter(Boolean);
+function buildSubtasks(
+  step: StepInfo,
+  locale: "en" | "zh",
+  activeRunWindow?: { startDate: string; endDate: string } | null
+): Array<{ label: string; status: SubtaskStatus }> {
+  const labels = step.logs.map((log) => localizeSubtask(log, locale, activeRunWindow)).filter(Boolean);
   if (labels.length === 0) return [];
 
   return labels.map((label, idx) => ({
@@ -125,9 +130,9 @@ function buildSubtasks(step: StepInfo, locale: "en" | "zh"): Array<{ label: stri
   }));
 }
 
-function SubtaskList({ step }: { step: StepInfo }) {
+function SubtaskList({ step, activeRunWindow }: { step: StepInfo; activeRunWindow?: { startDate: string; endDate: string } | null }) {
   const { locale } = useI18n();
-  const tasks = buildSubtasks(step, locale);
+  const tasks = buildSubtasks(step, locale, activeRunWindow);
   if (tasks.length === 0) return null;
 
   return (
@@ -166,7 +171,7 @@ function BacktestProgress({ step }: { step: StepInfo }) {
   );
 }
 
-export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceStepProps) {
+export default function WorkspaceStepCard({ step, isLast, progress, activeRunWindow }: WorkspaceStepProps) {
   const { t } = useI18n();
   const isActive = step.status === "running" || step.status === "done" || step.status === "error";
 
@@ -219,7 +224,7 @@ export default function WorkspaceStepCard({ step, isLast, progress }: WorkspaceS
             {step.key === "backtest" && step.status !== "error" && (
               <BacktestProgress step={step} />
             )}
-            <SubtaskList step={step} />
+            <SubtaskList step={step} activeRunWindow={activeRunWindow} />
           </div>
         )}
       </div>

@@ -16,9 +16,10 @@ interface AIWorkspaceProps {
   steps: StepInfo[];
   progress: number;
   artifacts: RunStatusResponse['artifacts'] | null;
+  activeRunWindow: { startDate: string; endDate: string } | null;
 }
 
-export default function AIWorkspace({ status, runId, steps, progress, artifacts }: AIWorkspaceProps) {
+export default function AIWorkspace({ status, runId, steps, progress, artifacts, activeRunWindow }: AIWorkspaceProps) {
   const { t } = useI18n();
 
   const isIdle = status === 'idle';
@@ -60,6 +61,7 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts 
                 step={step}
                 isLast={index === steps.length - 1}
                 progress={progress}
+                activeRunWindow={activeRunWindow}
               />
             ))}
 

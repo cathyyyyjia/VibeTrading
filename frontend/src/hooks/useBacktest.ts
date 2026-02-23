@@ -29,6 +29,7 @@ export interface UseBacktestReturn {
   backtestWindowPreset: BacktestWindowPreset;
   backtestStartDate: string;
   backtestEndDate: string;
+  activeRunWindow: { startDate: string; endDate: string } | null;
   setPrompt: (v: string) => void;
   setIndicatorPreferences: (next: api.IndicatorPreferences) => void;
   setBacktestWindowPreset: (preset: BacktestWindowPreset) => void;
@@ -82,6 +83,7 @@ export function useBacktest(): UseBacktestReturn {
   const [indicatorPreferences, setIndicatorPreferences] = useState<api.IndicatorPreferences>(DEFAULT_INDICATOR_PREFERENCES);
   const [backtestWindowPreset, setBacktestWindowPresetState] = useState<BacktestWindowPreset>("all");
   const [backtestDateRange, setBacktestDateRangeState] = useState(() => getPresetDateRange("all"));
+  const [activeRunWindow, setActiveRunWindow] = useState<{ startDate: string; endDate: string } | null>(null);
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeRef = useRef<RealtimeChannel | null>(null);
@@ -304,6 +306,7 @@ export function useBacktest(): UseBacktestReturn {
     setError(null);
     setReport(null);
     setArtifacts(null);
+    setActiveRunWindow({ startDate: backtestDateRange.startDate, endDate: backtestDateRange.endDate });
     setSteps(buildInitialWorkspaceSteps());
     setProgress(0);
     setStatusMessage("Submitting strategy for parse...");
@@ -333,6 +336,7 @@ export function useBacktest(): UseBacktestReturn {
       const msg = e instanceof Error ? e.message : "Failed to start backtest. Please try again.";
       setError(msg);
       setStatusMessage("Failed to initialize");
+      setActiveRunWindow(null);
     }
   }, [backtestDateRange.endDate, backtestDateRange.startDate, filters, indicatorPreferences, prompt, startTracking]);
 
@@ -347,6 +351,7 @@ export function useBacktest(): UseBacktestReturn {
     setProgress(0);
     setArtifacts(null);
     setReport(null);
+    setActiveRunWindow(null);
     setError(null);
     setStatusMessage("");
   }, [stopPolling, stopRealtime]);
@@ -395,6 +400,7 @@ export function useBacktest(): UseBacktestReturn {
     backtestWindowPreset,
     backtestStartDate: backtestDateRange.startDate,
     backtestEndDate: backtestDateRange.endDate,
+    activeRunWindow,
     setPrompt,
     setIndicatorPreferences,
     setBacktestWindowPreset,
