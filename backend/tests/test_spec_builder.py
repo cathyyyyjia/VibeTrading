@@ -86,14 +86,13 @@ def _draft_multi_stage_tqqq() -> dict[str, Any]:
       },
       "logic": {
         "rules": [
-          {"id": "rule_stage1", "when": {"all": [{"event_id": "ev_cross_4h", "scope": "BAR"}, {"event_id": "ev_below_ma5", "scope": "BAR"}]}, "then": [{"action_id": "sell_partial"}, {"action_id": "set_stage1_done"}]},
-          {"id": "rule_stage2", "when": {"all": [{"flag_is_true": {"flag": "stage1_done"}}, {"event_id": "ev_cross_1d", "scope": "BAR"}, {"event_id": "ev_below_ma20", "scope": "BAR"}]}, "then": [{"action_id": "sell_all"}]},
+          {"id": "rule_stage1", "when": {"all": [{"event_id": "ev_cross_4h", "scope": "BAR"}, {"event_id": "ev_below_ma5", "scope": "BAR"}]}, "then": [{"action_id": "sell_partial"}]},
+          {"id": "rule_stage2", "when": {"all": [{"event_id": "ev_cross_1d", "scope": "BAR"}, {"event_id": "ev_below_ma20", "scope": "BAR"}]}, "then": [{"action_id": "sell_all"}]},
         ]
       },
       "action": {
         "actions": [
           {"id": "sell_partial", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.35}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
-          {"id": "set_stage1_done", "type": "SET_FLAG", "flag": "stage1_done", "cooldown": None},
           {"id": "sell_all", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FULL_POSITION", "value": 1.0}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
         ]
       },
@@ -172,13 +171,13 @@ async def test_prompt_3_multi_stage_reduce_then_exit(monkeypatch: pytest.MonkeyP
   actions = (((dsl.get("action") or {}).get("actions")) or [])
 
   assert len(rules) == 2
-  assert any(isinstance(a, dict) and str(a.get("type") or "").upper() == "SET_FLAG" for a in actions)
+  assert not any(isinstance(a, dict) and str(a.get("type") or "").upper() == "SET_FLAG" for a in actions)
   partial = next(a for a in actions if isinstance(a, dict) and a.get("id") == "sell_partial")
   assert partial["qty"]["mode"] == "FRACTION_OF_POSITION"
   assert float(partial["qty"]["value"]) == pytest.approx(0.35)
 
   stage2 = next(r for r in rules if isinstance(r, dict) and r.get("id") == "rule_stage2")
-  assert "flag_is_true" in str(stage2.get("when"))
+  assert "flag_is_true" not in str(stage2.get("when"))
 
 
 @pytest.mark.asyncio

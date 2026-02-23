@@ -43,9 +43,10 @@ Semantic requirements:
 - For strategies that only describe reducing/exiting existing holdings, initial_position_qty can be positive and initial_cash can be 0.
 
 3) Stage logic:
-- For sequence semantics (then/after/之后/然后), split into explicit stages.
-- Use SET_FLAG and flag_is_true for stage transitions.
-- If user states exactly one reduce stage then full exit stage, keep exactly those stages.
+- Multi-condition and multi-rule execution is independent.
+- Trigger each rule as soon as its own condition is satisfied.
+- Do not use flag actions or flag conditions for stage sequencing.
+- Words like then/after/然后/之后 can describe narrative order, but do not force dependency.
 
 4) Signal mapping:
 - MACD death cross => CROSS_DOWN(macd, signal).
@@ -296,17 +297,6 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                       "cooldown": {"type": ["string", "null"]},
                     },
                   },
-                  {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["id", "type", "flag", "cooldown"],
-                    "properties": {
-                      "id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
-                      "type": {"type": "string", "enum": ["SET_FLAG"]},
-                      "flag": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
-                      "cooldown": {"type": ["string", "null"]},
-                    },
-                  },
                 ]
               },
             }
@@ -353,19 +343,6 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
           "properties": {
             "event_id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
             "scope": {"type": ["string", "null"], "enum": ["BAR", "LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D", None]},
-          },
-        },
-        {
-          "type": "object",
-          "additionalProperties": False,
-          "required": ["flag_is_true"],
-          "properties": {
-            "flag_is_true": {
-              "type": "object",
-              "additionalProperties": False,
-              "required": ["flag"],
-              "properties": {"flag": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"}},
-            }
           },
         },
         {
@@ -524,7 +501,7 @@ Return ONLY StrategyDraft JSON with fields:
 Output requirements:
 - indicators/events/rules/actions must all be non-empty arrays.
 - Keep symbol intent exact (signal symbol vs traded symbol).
-- Make multi-stage logic explicit with SET_FLAG + flag_is_true when needed.
+- Rules are independent; do not introduce flag gating.
 - Do not invent BUY actions unless user explicitly requests entry/build position.
 - Do not invent extra reduce percentages or extra stages.
 - If NL has date action trigger, encode it in rule.when using on_month_day/on_date and bind it to that action stage.
