@@ -83,3 +83,77 @@ async def test_backtest_has_moc_fill_time_at_close(monkeypatch: pytest.MonkeyPat
     session = cal.date_to_session(t["fill_time"].date(), direction="none")
     close_ts = cal.session_close(session).to_pydatetime()
     assert t["fill_time"].replace(tzinfo=None) == close_ts.replace(tzinfo=None)
+
+
+def _rsi_strategy_spec() -> dict:
+  return {
+    "name": "test-rsi-threshold",
+    "strategy_version": "v0",
+    "timezone": "America/New_York",
+    "calendar": {"type": "exchange", "value": "XNYS"},
+    "universe": {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"},
+    "decision": {"decision_time_rule": {"type": "MARKET_CLOSE_OFFSET", "offset": "-2m"}},
+    "execution": {"model": "MOC", "slippage_bps": 0.0, "commission_per_trade": 0.0},
+    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 1},
+    "dsl": {
+      "atomic": {
+        "symbols": {"signal": "QQQ", "trade": "TQQQ"},
+        "constants": {"lookback": "5d", "sell_fraction": 0.2, "initial_position_qty": 100, "initial_cash": 0},
+      },
+      "time": {
+        "primary_tf": "1m",
+        "derived_tfs": ["4h", "1d"],
+        "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"},
+      },
+      "signal": {
+        "indicators": [
+          {"id": "rsi_1d", "type": "RSI", "tf": "1d", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"period": 14}},
+        ],
+        "events": [
+          {
+            "id": "rsi_below_45",
+            "type": "THRESHOLD",
+            "a": None,
+            "b": None,
+            "left": "rsi_1d.value",
+            "right": None,
+            "direction": None,
+            "op": ">=",
+            "value": 0,
+            "tf": "1d",
+          }
+        ],
+      },
+      "logic": {
+        "rules": [
+          {"id": "sell_rule", "when": {"event_id": "rsi_below_45", "scope": "BAR"}, "then": [{"action_id": "sell_20pct"}]}
+        ]
+      },
+      "action": {
+        "actions": [
+          {
+            "id": "sell_20pct",
+            "type": "ORDER",
+            "symbol_ref": "trade",
+            "side": "SELL",
+            "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.2},
+            "order_type": "MOC",
+            "time_in_force": None,
+            "idempotency_scope": None,
+            "cooldown": "1d",
+          }
+        ]
+      },
+    },
+    "meta": {"mode": "BACKTEST_ONLY", "llm_used": False},
+  }
+
+
+@pytest.mark.asyncio
+async def test_backtest_supports_rsi_indicator_via_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(settings, "market_data_provider", "synthetic")
+  spec = _rsi_strategy_spec()
+  result = await run_backtest_from_spec(spec, start_date="2024-01-02", end_date="2024-03-29")
+  assert isinstance(result.trades, list)
+  assert len(result.trades) > 0
+  assert all(t["side"] == "SELL" for t in result.trades)

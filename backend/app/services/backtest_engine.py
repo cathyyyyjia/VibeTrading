@@ -40,6 +40,29 @@ def _macd(closes: list[float], fast: int, slow: int, signal: int) -> tuple[list[
   return macd_line, signal_line
 
 
+def _rsi(closes: list[float], period: int) -> list[float | None]:
+  if len(closes) < 2:
+    return [None] * len(closes)
+  n = max(2, int(period))
+  out: list[float | None] = [None] * len(closes)
+  gains: list[float] = []
+  losses: list[float] = []
+  for i in range(1, len(closes)):
+    delta = closes[i] - closes[i - 1]
+    gains.append(max(delta, 0.0))
+    losses.append(max(-delta, 0.0))
+    if i < n:
+      continue
+    avg_gain = float(np.mean(gains[i - n : i]))
+    avg_loss = float(np.mean(losses[i - n : i]))
+    if avg_loss <= 1e-12:
+      out[i] = 100.0
+    else:
+      rs = avg_gain / avg_loss
+      out[i] = 100.0 - (100.0 / (1.0 + rs))
+  return out
+
+
 def _cross_down(macd_line: list[float], signal_line: list[float], idx: int) -> bool:
   if idx <= 0 or idx >= len(macd_line) or idx >= len(signal_line):
     return False
@@ -176,6 +199,193 @@ def _compare(op: str, left: float | None, right: float | None) -> bool:
   if op == "!=":
     return abs(left - right) >= 1e-12
   return False
+
+
+@dataclass
+class IndicatorRuntimeContext:
+  session_rows: list[dict[str, Any]]
+  idx4h_by_session: list[int | None]
+  idx1d_by_session: list[int | None]
+  four_h_closes: list[float]
+  daily_signal_close: list[float]
+  daily_trade_close: list[float]
+  signal_symbol: str
+  trade_symbol: str
+  symbol_refs: dict[str, str]
+  constants: dict[str, Any]
+  indicator_defaults: dict[str, int]
+  decision_indicator_values: list[dict[str, dict[str, float | None]]]
+  indicator_tf_series: dict[str, dict[str, Any]]
+
+  def daily_series(self, symbol_ref: str) -> list[float]:
+    resolved = self.symbol_refs.get(symbol_ref, self.signal_symbol)
+    return self.daily_trade_close if resolved == self.trade_symbol else self.daily_signal_close
+
+
+def _indicator_handler_macd(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf not in ("4h", "1d"):
+    return
+
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  fast = _read_int_pref(params, ["fast"], ctx.indicator_defaults["macd_fast"])
+  slow = _read_int_pref(params, ["slow"], ctx.indicator_defaults["macd_slow"])
+  signal_n = _read_int_pref(params, ["signal"], ctx.indicator_defaults["macd_signal"])
+
+  source_series = ctx.four_h_closes if tf == "4h" else ctx.daily_series(symbol_ref)
+  macd_line, signal_line = _macd(source_series, fast, slow, signal_n)
+  ctx.indicator_tf_series[ind_id] = {"tf": tf, "series": {"macd": macd_line, "signal": signal_line}}
+
+  idx_by_session = ctx.idx4h_by_session if tf == "4h" else ctx.idx1d_by_session
+  for i, idx_tf in enumerate(idx_by_session):
+    values = {"macd": None, "signal": None, "value": None}
+    if idx_tf is not None and idx_tf < len(macd_line):
+      values["macd"] = float(macd_line[idx_tf])
+      values["signal"] = float(signal_line[idx_tf]) if idx_tf < len(signal_line) else None
+      values["value"] = values["macd"]
+    ctx.decision_indicator_values[i][ind_id] = values
+
+
+def _indicator_handler_ma(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf != "1d":
+    return
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  window = _parse_lookback_days(params.get("window") or ctx.constants.get("lookback"), default=ctx.indicator_defaults["ma_window_days"])
+  series = ctx.daily_series(symbol_ref)
+  for i in range(len(ctx.session_rows)):
+    val: float | None = None
+    if i >= window and i <= len(series):
+      val = float(np.mean(series[i - window : i]))
+    ctx.decision_indicator_values[i][ind_id] = {"value": val}
+
+
+def _indicator_handler_close(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  for i, row in enumerate(ctx.session_rows):
+    val: float | None = None
+    if tf == "1m":
+      val = float(row["decision_price_trade"] if ctx.symbol_refs.get(symbol_ref) == ctx.trade_symbol else row["decision_price_signal"])
+    elif tf == "1d":
+      series = ctx.daily_series(symbol_ref)
+      if i > 0 and i - 1 < len(series):
+        val = float(series[i - 1])
+    elif tf == "4h":
+      idx4h = ctx.idx4h_by_session[i]
+      if idx4h is not None and idx4h < len(ctx.four_h_closes):
+        val = float(ctx.four_h_closes[idx4h])
+    ctx.decision_indicator_values[i][ind_id] = {"value": val}
+
+
+def _indicator_handler_rsi(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf != "1d":
+    return
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  period = _read_int_pref(params, ["period", "window"], 14)
+  rsi_series = _rsi(ctx.daily_series(symbol_ref), period)
+  for i, idx1d in enumerate(ctx.idx1d_by_session):
+    value = None
+    if idx1d is not None and 0 <= idx1d < len(rsi_series):
+      value = rsi_series[idx1d]
+    ctx.decision_indicator_values[i][ind_id] = {"value": float(value) if value is not None else None}
+
+
+INDICATOR_HANDLERS: dict[str, Callable[[dict[str, Any], str, IndicatorRuntimeContext], None]] = {
+  "MACD": _indicator_handler_macd,
+  "SMA": _indicator_handler_ma,
+  "MA": _indicator_handler_ma,
+  "CLOSE": _indicator_handler_close,
+  "RSI": _indicator_handler_rsi,
+}
+
+
+@dataclass
+class EventRuntimeContext:
+  session_rows: list[dict[str, Any]]
+  idx4h_by_session: list[int | None]
+  idx1d_by_session: list[int | None]
+  indicator_tf_series: dict[str, dict[str, Any]]
+  decision_indicator_values: list[dict[str, dict[str, float | None]]]
+
+  def resolve_operand(self, operand: Any, session_idx: int) -> float | None:
+    if isinstance(operand, (int, float)):
+      return _safe_float(operand)
+    ref = _read_ref(operand)
+    if isinstance(ref, str):
+      ind_id, field = _normalize_ref(ref)
+      bucket = self.decision_indicator_values[session_idx].get(ind_id) or {}
+      return _safe_float(bucket.get(field))
+    if isinstance(operand, dict):
+      return _safe_float(operand.get("value"))
+    return None
+
+
+def _event_handler_cross(ev: dict[str, Any], ctx: EventRuntimeContext) -> list[bool]:
+  hits = [False] * len(ctx.session_rows)
+  event_type = str(ev.get("type") or "").strip().upper()
+  direction = str(ev.get("direction") or "").upper()
+  if event_type == "CROSS_DOWN":
+    direction = "DOWN"
+  elif event_type == "CROSS_UP":
+    direction = "UP"
+  if direction not in ("UP", "DOWN", "ANY"):
+    direction = "DOWN"
+
+  a_ref = _read_ref(ev.get("a")) or _read_ref(ev.get("left")) or ""
+  b_ref = _read_ref(ev.get("b")) or _read_ref(ev.get("right")) or ""
+  a_id, a_field = _normalize_ref(a_ref)
+  b_id, b_field = _normalize_ref(b_ref)
+  a_meta = ctx.indicator_tf_series.get(a_id) or {}
+  b_meta = ctx.indicator_tf_series.get(b_id) or {}
+  a_series = ((a_meta.get("series") or {}) if isinstance(a_meta, dict) else {}).get(a_field)
+  b_series = ((b_meta.get("series") or {}) if isinstance(b_meta, dict) else {}).get(b_field)
+
+  event_tf = str(ev.get("tf") or "").strip().lower()
+  selected_tf = event_tf or str(a_meta.get("tf") or b_meta.get("tf") or "").lower()
+  idx_by_session = ctx.idx4h_by_session if selected_tf == "4h" else ctx.idx1d_by_session if selected_tf == "1d" else None
+  if not isinstance(a_series, list) or not isinstance(b_series, list) or not isinstance(idx_by_session, list):
+    return hits
+
+  for i, idx_tf in enumerate(idx_by_session):
+    if idx_tf is None or idx_tf <= 0 or idx_tf >= len(a_series) or idx_tf >= len(b_series):
+      continue
+    a_prev, a_cur = a_series[idx_tf - 1], a_series[idx_tf]
+    b_prev, b_cur = b_series[idx_tf - 1], b_series[idx_tf]
+    cross_down = a_prev >= b_prev and a_cur < b_cur
+    cross_up = a_prev <= b_prev and a_cur > b_cur
+    if direction == "DOWN":
+      hits[i] = cross_down
+    elif direction == "UP":
+      hits[i] = cross_up
+    else:
+      hits[i] = cross_down or cross_up
+  return hits
+
+
+def _event_handler_threshold(ev: dict[str, Any], ctx: EventRuntimeContext) -> list[bool]:
+  hits = [False] * len(ctx.session_rows)
+  op = str(ev.get("op") or ev.get("operator") or "<").strip()
+  left_ref = _read_ref(ev.get("left")) or ""
+  right_ref = _read_ref(ev.get("right"))
+  right_const = _safe_float(ev.get("value") if right_ref is None else None)
+  for i in range(len(ctx.session_rows)):
+    left_v = ctx.resolve_operand(left_ref, i) if left_ref else None
+    right_v = ctx.resolve_operand(right_ref, i) if right_ref else right_const
+    hits[i] = _compare(op, left_v, right_v)
+  return hits
+
+
+EVENT_HANDLERS: dict[str, Callable[[dict[str, Any], EventRuntimeContext], list[bool]]] = {
+  "CROSS": _event_handler_cross,
+  "CROSS_DOWN": _event_handler_cross,
+  "CROSS_UP": _event_handler_cross,
+  "THRESHOLD": _event_handler_threshold,
+}
 
 
 async def run_backtest_from_spec(
@@ -417,6 +627,21 @@ async def run_backtest_from_spec(
     return None
 
   indicators = signal_layer.get("indicators") if isinstance(signal_layer, dict) else None
+  indicator_ctx = IndicatorRuntimeContext(
+    session_rows=session_rows,
+    idx4h_by_session=idx4h_by_session,
+    idx1d_by_session=idx1d_by_session,
+    four_h_closes=four_h_closes,
+    daily_signal_close=daily_signal_close,
+    daily_trade_close=daily_trade_close,
+    signal_symbol=signal_symbol,
+    trade_symbol=trade_symbol,
+    symbol_refs=symbol_refs,
+    constants=constants,
+    indicator_defaults=indicator_defaults,
+    decision_indicator_values=decision_indicator_values,
+    indicator_tf_series=indicator_tf_series,
+  )
   if isinstance(indicators, list):
     for ind in indicators:
       if not isinstance(ind, dict):
@@ -425,56 +650,20 @@ async def run_backtest_from_spec(
       if not ind_id:
         continue
       ind_type = str(ind.get("type") or "").strip().upper()
-      tf = str(ind.get("tf") or "").strip().lower()
-      symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
-      params = ind.get("params") or {}
-      if not isinstance(params, dict):
-        params = {}
-
-      values: dict[str, float | None]
-      if ind_type == "MACD" and tf in ("4h", "1d"):
-        fast = _read_int_pref(params, ["fast"], indicator_defaults["macd_fast"])
-        slow = _read_int_pref(params, ["slow"], indicator_defaults["macd_slow"])
-        signal_n = _read_int_pref(params, ["signal"], indicator_defaults["macd_signal"])
-        source_series = four_h_closes if tf == "4h" else _daily_series(symbol_ref)
-        macd_line, signal_line = _macd(source_series, fast, slow, signal_n)
-        indicator_tf_series[ind_id] = {"tf": tf, "series": {"macd": macd_line, "signal": signal_line}}
-        idx_by_session = idx4h_by_session if tf == "4h" else idx1d_by_session
-        for i, idx_tf in enumerate(idx_by_session):
-          values = {"macd": None, "signal": None, "value": None}
-          if idx_tf is not None and idx_tf < len(macd_line):
-            values["macd"] = float(macd_line[idx_tf])
-            values["signal"] = float(signal_line[idx_tf]) if idx_tf < len(signal_line) else None
-            values["value"] = values["macd"]
-          decision_indicator_values[i][ind_id] = values
-      elif ind_type in ("SMA", "MA") and tf == "1d":
-        window = _parse_lookback_days(
-          params.get("window") or constants.get("lookback"),
-          default=indicator_defaults["ma_window_days"],
-        )
-        series = _daily_series(symbol_ref)
-        for i in range(len(session_rows)):
-          val: float | None = None
-          if i >= window and i <= len(series):
-            val = float(np.mean(series[i - window : i]))
-          decision_indicator_values[i][ind_id] = {"value": val}
-      elif ind_type == "CLOSE":
-        for i, row in enumerate(session_rows):
-          val: float | None = None
-          if tf == "1m":
-            val = float(row["decision_price_trade"] if symbol_refs.get(symbol_ref) == trade_symbol else row["decision_price_signal"])
-          elif tf == "1d":
-            series = _daily_series(symbol_ref)
-            if i > 0 and i - 1 < len(series):
-              val = float(series[i - 1])
-          elif tf == "4h":
-            idx4h = idx4h_by_session[i]
-            if idx4h is not None and idx4h < len(four_h_closes):
-              val = float(four_h_closes[idx4h])
-          decision_indicator_values[i][ind_id] = {"value": val}
+      handler = INDICATOR_HANDLERS.get(ind_type)
+      if handler is None:
+        continue
+      handler(ind, ind_id, indicator_ctx)
 
   event_hits: dict[str, list[bool]] = {}
   event_type_by_id: dict[str, str] = {}
+  event_ctx = EventRuntimeContext(
+    session_rows=session_rows,
+    idx4h_by_session=idx4h_by_session,
+    idx1d_by_session=idx1d_by_session,
+    indicator_tf_series=indicator_tf_series,
+    decision_indicator_values=decision_indicator_values,
+  )
   events = signal_layer.get("events") if isinstance(signal_layer, dict) else None
   if isinstance(events, list):
     for ev in events:
@@ -485,50 +674,8 @@ async def run_backtest_from_spec(
         continue
       event_type = str(ev.get("type") or "").strip().upper()
       event_type_by_id[event_id] = event_type
-      hits = [False] * len(session_rows)
-      if event_type in ("CROSS_DOWN", "CROSS_UP", "CROSS"):
-        direction = str(ev.get("direction") or "").upper()
-        if event_type == "CROSS_DOWN":
-          direction = "DOWN"
-        elif event_type == "CROSS_UP":
-          direction = "UP"
-        if direction not in ("UP", "DOWN", "ANY"):
-          direction = "DOWN"
-        a_ref = _read_ref(ev.get("a")) or _read_ref(ev.get("left")) or ""
-        b_ref = _read_ref(ev.get("b")) or _read_ref(ev.get("right")) or ""
-        a_id, a_field = _normalize_ref(a_ref)
-        b_id, b_field = _normalize_ref(b_ref)
-        a_meta = indicator_tf_series.get(a_id) or {}
-        b_meta = indicator_tf_series.get(b_id) or {}
-        a_series = ((a_meta.get("series") or {}) if isinstance(a_meta, dict) else {}).get(a_field)
-        b_series = ((b_meta.get("series") or {}) if isinstance(b_meta, dict) else {}).get(b_field)
-        event_tf = str(ev.get("tf") or "").strip().lower()
-        selected_tf = event_tf or str(a_meta.get("tf") or b_meta.get("tf") or "").lower()
-        idx_by_session = idx4h_by_session if selected_tf == "4h" else idx1d_by_session if selected_tf == "1d" else None
-
-        if isinstance(a_series, list) and isinstance(b_series, list) and isinstance(idx_by_session, list):
-          for i, idx_tf in enumerate(idx_by_session):
-            if idx_tf is None or idx_tf <= 0 or idx_tf >= len(a_series) or idx_tf >= len(b_series):
-              continue
-            a_prev, a_cur = a_series[idx_tf - 1], a_series[idx_tf]
-            b_prev, b_cur = b_series[idx_tf - 1], b_series[idx_tf]
-            cross_down = a_prev >= b_prev and a_cur < b_cur
-            cross_up = a_prev <= b_prev and a_cur > b_cur
-            if direction == "DOWN":
-              hits[i] = cross_down
-            elif direction == "UP":
-              hits[i] = cross_up
-            else:
-              hits[i] = cross_down or cross_up
-      elif event_type == "THRESHOLD":
-        op = str(ev.get("op") or ev.get("operator") or "<").strip()
-        left_ref = _read_ref(ev.get("left")) or ""
-        right_ref = _read_ref(ev.get("right"))
-        right_const = _safe_float(ev.get("value") if right_ref is None else None)
-        for i in range(len(session_rows)):
-          left_v = _resolve_operand(left_ref, i) if left_ref else None
-          right_v = _resolve_operand(right_ref, i) if right_ref else right_const
-          hits[i] = _compare(op, left_v, right_v)
+      handler = EVENT_HANDLERS.get(event_type)
+      hits = handler(ev, event_ctx) if handler else [False] * len(session_rows)
       event_hits[event_id] = hits
 
   def _eval_condition(cond: Any, session_idx: int) -> bool:
