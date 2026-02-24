@@ -181,6 +181,29 @@ async def test_prompt_3_multi_stage_reduce_then_exit(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_cross_event_in_all_rule_is_normalized_to_event_within(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_single_partial()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(PROMPT, "BACKTEST_ONLY")
+
+  rules = ((((spec.get("dsl") or {}).get("logic")) or {}).get("rules") or [])
+  reduce_rule = next(r for r in rules if isinstance(r, dict) and r.get("id") == "rule_reduce")
+  when = reduce_rule.get("when") or {}
+  all_conditions = when.get("all") if isinstance(when, dict) else []
+  assert isinstance(all_conditions, list)
+
+  cross_window = next(
+    c for c in all_conditions
+    if isinstance(c, dict)
+    and isinstance(c.get("event_within"), dict)
+    and (c.get("event_within") or {}).get("event_id") == "ev_macd_4h_dead_cross"
+  )
+  assert (cross_window.get("event_within") or {}).get("lookback") == "5d"
+
+
+@pytest.mark.asyncio
 async def test_prompt_4_multi_symbol_stage_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
   async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return _draft_multi_stage_sox()

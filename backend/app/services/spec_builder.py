@@ -476,6 +476,93 @@ def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] |
   )
 
 
+def _normalize_cross_event_window_semantics(spec: dict[str, Any]) -> None:
+  """
+  Normalize LLM outputs so CROSS events used with additional state filters
+  are interpreted as "event within lookback window" rather than same-bar only.
+  """
+  dsl = spec.get("dsl")
+  if not isinstance(dsl, dict):
+    return
+
+  signal_layer = dsl.get("signal")
+  logic_layer = dsl.get("logic")
+  atomic_layer = dsl.get("atomic")
+  if not isinstance(signal_layer, dict) or not isinstance(logic_layer, dict):
+    return
+
+  constants = atomic_layer.get("constants") if isinstance(atomic_layer, dict) else {}
+  lookback = "5d"
+  if isinstance(constants, dict):
+    raw_lookback = constants.get("lookback")
+    if isinstance(raw_lookback, str) and raw_lookback.strip():
+      lookback = raw_lookback.strip()
+
+  cross_event_ids: set[str] = set()
+  events = signal_layer.get("events")
+  if isinstance(events, list):
+    for ev in events:
+      if not isinstance(ev, dict):
+        continue
+      ev_id = ev.get("id")
+      ev_type = str(ev.get("type") or "").strip().upper()
+      if isinstance(ev_id, str) and ev_id and ev_type in {"CROSS", "CROSS_UP", "CROSS_DOWN"}:
+        cross_event_ids.add(ev_id)
+  if not cross_event_ids:
+    return
+
+  def _is_cross_event_bar_scope(cond: Any) -> bool:
+    if not isinstance(cond, dict):
+      return False
+    event_id = cond.get("event_id")
+    if not isinstance(event_id, str) or event_id not in cross_event_ids:
+      return False
+    if "event_within" in cond:
+      return False
+    scope = str(cond.get("scope") or "").upper()
+    return scope in {"", "BAR", "LAST_CLOSED_4H_BAR", "LAST_CLOSED_1D"}
+
+  def _normalize_condition(cond: Any) -> Any:
+    if not isinstance(cond, dict):
+      return cond
+
+    if "all" in cond and isinstance(cond.get("all"), list):
+      children = [_normalize_condition(child) for child in cond["all"]]
+      has_cross_event = any(_is_cross_event_bar_scope(child) for child in children)
+      has_other_filter = any(not _is_cross_event_bar_scope(child) for child in children)
+      if has_cross_event and has_other_filter:
+        rewritten: list[Any] = []
+        for child in children:
+          if _is_cross_event_bar_scope(child):
+            event_id = child.get("event_id")
+            rewritten.append({"event_within": {"event_id": event_id, "lookback": lookback}})
+          else:
+            rewritten.append(child)
+        out = dict(cond)
+        out["all"] = rewritten
+        return out
+      out = dict(cond)
+      out["all"] = children
+      return out
+
+    if "any" in cond and isinstance(cond.get("any"), list):
+      out = dict(cond)
+      out["any"] = [_normalize_condition(child) for child in cond["any"]]
+      return out
+
+    return cond
+
+  rules = logic_layer.get("rules")
+  if not isinstance(rules, list):
+    return
+  for rule in rules:
+    if not isinstance(rule, dict):
+      continue
+    when = rule.get("when")
+    if isinstance(when, dict):
+      rule["when"] = _normalize_condition(when)
+
+
 async def nl_to_strategy_spec(
   nl_text: str,
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
@@ -525,6 +612,7 @@ Output requirements:
       spec = _assemble_final_strategy_spec(draft=draft, nl_text=nl_text, mode=mode)
       if overrides and isinstance(overrides, dict):
         spec = _deep_merge(spec, overrides)
+      _normalize_cross_event_window_semantics(spec)
       spec["strategy_version"] = "v0"
 
       meta = spec.get("meta")
