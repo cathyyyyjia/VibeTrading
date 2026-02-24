@@ -12,6 +12,16 @@ import { formatDateByLocale, isIsoDate, type BacktestWindowPreset } from '@/lib/
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface StrategyInputProps {
   prompt: string;
@@ -55,6 +65,7 @@ export default function StrategyInput({
   const [advancedModule, setAdvancedModule] = useState<'indicators' | 'window'>('indicators');
   const [maSelection, setMaSelection] = useState<'preset' | 'custom'>('preset');
   const [macdSelection, setMacdSelection] = useState<'preset' | 'custom'>('preset');
+  const [confirmDateOpen, setConfirmDateOpen] = useState(false);
   const isRunning = status === 'running' || status === 'analyzing';
   const isIdle = status === 'idle';
   const maPresets = [5, 10, 20, 50];
@@ -75,6 +86,11 @@ export default function StrategyInput({
     return backtestStartDate > backtestEndDate;
   }, [backtestEndDate, backtestStartDate]);
   const formattedRangeSummary = `${formatDateByLocale(backtestStartDate, locale)} ~ ${formatDateByLocale(backtestEndDate, locale)}`;
+  const confirmTitle = locale === 'zh' ? '确认回测时间' : 'Confirm Backtest Window';
+  const confirmDescription = locale === 'zh'
+    ? `本次将使用 ${formatDateByLocale(backtestStartDate, locale)} 至 ${formatDateByLocale(backtestEndDate, locale)} 进行回测。是否继续？`
+    : `This run will backtest from ${backtestStartDate} to ${backtestEndDate}. Continue?`;
+  const confirmRunText = locale === 'zh' ? '确认回测' : 'Confirm';
 
   const updateIndicatorPreference = (partial: Partial<IndicatorPreferences>) => {
     onIndicatorPreferencesChange({ ...indicatorPreferences, ...partial });
@@ -90,6 +106,14 @@ export default function StrategyInput({
     const n = Number(value);
     if (Number.isNaN(n)) return;
     updateIndicatorPreference({ maWindowDays: Math.max(1, Math.floor(n)) });
+  };
+  const handleRunClick = () => {
+    if (isRunning || !prompt.trim() || isDateRangeInvalid) return;
+    setConfirmDateOpen(true);
+  };
+  const handleConfirmRun = () => {
+    setConfirmDateOpen(false);
+    onRunBacktest();
   };
 
   return (
@@ -130,7 +154,8 @@ export default function StrategyInput({
         </button>
         {/* Run Backtest Button */}
         <button
-          onClick={onRunBacktest}
+          type="button"
+          onClick={handleRunClick}
           disabled={isRunning || !prompt.trim() || isDateRangeInvalid}
           className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-foreground text-primary-foreground text-sm font-medium rounded-lg hover:bg-foreground/90 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
         >
@@ -352,6 +377,19 @@ export default function StrategyInput({
           </div>
         )}
       </div>
+
+      <AlertDialog open={confirmDateOpen} onOpenChange={setConfirmDateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRun}>{confirmRunText}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
