@@ -397,6 +397,7 @@ class EventRuntimeContext:
   idx1d_by_session: list[int | None]
   indicator_tf_series: dict[str, dict[str, Any]]
   decision_indicator_values: list[dict[str, dict[str, float | None]]]
+  event_details: dict[str, list[dict[str, Any] | None]]
 
   def resolve_operand(self, operand: Any, session_idx: int) -> float | None:
     if isinstance(operand, (int, float)):
@@ -516,6 +517,8 @@ def _find_pivot_indices(
 
 def _event_handler_divergence(ev: dict[str, Any], ctx: EventRuntimeContext) -> list[bool]:
   hits = [False] * len(ctx.session_rows)
+  details: list[dict[str, Any] | None] = [None] * len(ctx.session_rows)
+  ev_id = str(ev.get("id") or "")
   event_type = str(ev.get("type") or "").strip().upper()
   bearish = event_type == "DIVERGENCE_BEARISH"
   bullish = event_type == "DIVERGENCE_BULLISH"
@@ -557,8 +560,30 @@ def _event_handler_divergence(ev: dict[str, Any], ctx: EventRuntimeContext) -> l
 
     if bearish and p2v > p1v and o2v < o1v:
       hits[i] = True
+      details[i] = {
+        "price_pivot_1_idx": p1,
+        "price_pivot_2_idx": p2,
+        "osc_pivot_1_idx": o1,
+        "osc_pivot_2_idx": o2,
+        "price_pivot_1": p1v,
+        "price_pivot_2": p2v,
+        "osc_pivot_1": o1v,
+        "osc_pivot_2": o2v,
+      }
     if bullish and p2v < p1v and o2v > o1v:
       hits[i] = True
+      details[i] = {
+        "price_pivot_1_idx": p1,
+        "price_pivot_2_idx": p2,
+        "osc_pivot_1_idx": o1,
+        "osc_pivot_2_idx": o2,
+        "price_pivot_1": p1v,
+        "price_pivot_2": p2v,
+        "osc_pivot_1": o1v,
+        "osc_pivot_2": o2v,
+      }
+  if ev_id:
+    ctx.event_details[ev_id] = details
   return hits
 
 
@@ -838,6 +863,15 @@ async def run_backtest_from_spec(
       if handler is None:
         continue
       handler(ind, ind_id, indicator_ctx)
+  indicator_type_by_id: dict[str, str] = {}
+  if isinstance(indicators, list):
+    for ind in indicators:
+      if not isinstance(ind, dict):
+        continue
+      iid = str(ind.get("id") or "").strip()
+      it = str(ind.get("type") or "").strip().upper()
+      if iid and it:
+        indicator_type_by_id[iid] = it
 
   event_hits: dict[str, list[bool]] = {}
   event_type_by_id: dict[str, str] = {}
@@ -847,6 +881,7 @@ async def run_backtest_from_spec(
     idx1d_by_session=idx1d_by_session,
     indicator_tf_series=indicator_tf_series,
     decision_indicator_values=decision_indicator_values,
+    event_details={},
   )
   events = signal_layer.get("events") if isinstance(signal_layer, dict) else None
   if isinstance(events, list):
@@ -861,6 +896,43 @@ async def run_backtest_from_spec(
       handler = EVENT_HANDLERS.get(event_type)
       hits = handler(ev, event_ctx) if handler else [False] * len(session_rows)
       event_hits[event_id] = hits
+
+  divergence_signals: list[dict[str, Any]] = []
+  if isinstance(events, list):
+    for ev in events:
+      if not isinstance(ev, dict):
+        continue
+      ev_id = str(ev.get("id") or "").strip()
+      ev_type = str(ev.get("type") or "").strip().upper()
+      if ev_type not in {"DIVERGENCE_BEARISH", "DIVERGENCE_BULLISH"} or not ev_id:
+        continue
+      hits = event_hits.get(ev_id) or []
+      details = event_ctx.event_details.get(ev_id) or []
+      tf = str(ev.get("tf") or "").strip().lower()
+      for i, hit in enumerate(hits):
+        if not hit:
+          continue
+        row = session_rows[i]
+        detail = details[i] if i < len(details) and isinstance(details[i], dict) else {}
+        divergence_signals.append(
+          {
+            "event_id": ev_id,
+            "direction": "bearish" if ev_type == "DIVERGENCE_BEARISH" else "bullish",
+            "timeframe": tf,
+            "indicator": indicator_type_by_id.get(str((ev.get("b") or "")).split(".", 1)[0], str((ev.get("b") or "")).split(".", 1)[0]),
+            "decision_time": row["decision_ts"],
+            "trigger_time": row["session_close"],
+            "price_pivot_1": detail.get("price_pivot_1"),
+            "price_pivot_2": detail.get("price_pivot_2"),
+            "osc_pivot_1": detail.get("osc_pivot_1"),
+            "osc_pivot_2": detail.get("osc_pivot_2"),
+            "strength_score": (
+              abs(float(detail.get("price_pivot_2") or 0.0) - float(detail.get("price_pivot_1") or 0.0))
+              + abs(float(detail.get("osc_pivot_1") or 0.0) - float(detail.get("osc_pivot_2") or 0.0))
+            ),
+          }
+        )
+  divergence_signals.sort(key=lambda x: x.get("trigger_time") or datetime.min.replace(tzinfo=timezone.utc))
 
   def _eval_condition(cond: Any, session_idx: int) -> bool:
     if not isinstance(cond, dict):
@@ -1130,6 +1202,7 @@ async def run_backtest_from_spec(
       "missing_ratio": (len(skipped_sessions) / total_sessions) if total_sessions > 0 else 1.0,
       "gaps": skipped_sessions[:50],
     },
+    "divergence_signals": divergence_signals,
   }
 
   return BacktestResult(equity=equity, market=market_candles, trades=trades, kpis=kpis, artifacts=artifacts)

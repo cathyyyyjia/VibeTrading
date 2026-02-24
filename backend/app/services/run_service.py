@@ -375,6 +375,7 @@ async def execute_run(
           "equity": result.equity,
           "market": result.market,
           "trades": result.trades,
+          "divergences": ((result.artifacts or {}).get("divergence_signals") if isinstance(result.artifacts, dict) else []) or [],
           "ai_summary": ai_summary,
         }
       )
@@ -395,6 +396,14 @@ async def execute_run(
         "json",
         f"/api/runs/{run_id}/artifacts/ai_summary.json",
         content=ai_summary,
+      )
+      await _upsert_artifact(
+        db,
+        run_id,
+        "divergence_signals.json",
+        "json",
+        f"/api/runs/{run_id}/artifacts/divergence_signals.json",
+        content={"divergences": ((result.artifacts or {}).get("divergence_signals") if isinstance(result.artifacts, dict) else []) or []},
       )
       await _set_step_state(db, run_id, "report", "RUNNING", _log("INFO", "KPI snapshot generated"))
       report_md = f"# Backtest Report\n\n- Trades: {len(result.trades)}\n- Return%: {result.kpis.get('return_pct'):.2f}\n- Sharpe: {result.kpis.get('sharpe'):.2f}\n- MaxDD%: {result.kpis.get('max_dd_pct'):.2f}\n"
@@ -467,4 +476,3 @@ async def execute_run(
         pass
     finally:
       await _clear_queue_lock(run_id)
-

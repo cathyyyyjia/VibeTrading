@@ -9,7 +9,7 @@ import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
-import type { IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
+import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
 import { useMemo, useState } from 'react';
 
 interface SimulationResultProps {
@@ -36,6 +36,7 @@ export default function SimulationResult({
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const range = `${backtestStartDate} - ${backtestEndDate}`;
   const activeTrade = useMemo(() => hoveredTrade ?? pinnedTrade, [hoveredTrade, pinnedTrade]);
+  const divergences = report?.divergences || [];
 
   const getTradeKey = (trade: TradeRecord | null) => {
     if (!trade) return "";
@@ -92,9 +93,14 @@ export default function SimulationResult({
       <EquityChart
         data={report?.equity || null}
         trades={report?.trades || null}
+        divergences={divergences}
         selectedTrade={activeTrade}
         loading={isLoading && !report}
       />
+
+      {divergences.length > 0 && (
+        <DivergenceSection divergences={divergences} locale={locale} />
+      )}
 
       {/* Trade Table */}
       <TradeTable
@@ -110,6 +116,48 @@ export default function SimulationResult({
           setPinnedTrade(null);
         }}
       />
+    </div>
+  );
+}
+
+function DivergenceSection({ divergences, locale }: { divergences: DivergenceSignal[]; locale: "en" | "zh" }) {
+  const top = [...divergences]
+    .sort((a, b) => (b.strengthScore ?? 0) - (a.strengthScore ?? 0))
+    .slice(0, 20);
+
+  return (
+    <div className="border border-border rounded-lg bg-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border text-xs font-semibold text-foreground">
+        {locale === "zh" ? "背离识别结果" : "Divergence Signals"}
+      </div>
+      <div className="max-h-[240px] overflow-y-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-card z-10">
+            <tr className="border-b border-border/70">
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider py-2 px-3">{locale === "zh" ? "时间" : "Time"}</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider py-2 px-3">{locale === "zh" ? "类型" : "Type"}</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider py-2 px-3">{locale === "zh" ? "指标" : "Indicator"}</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider py-2 px-3">{locale === "zh" ? "周期" : "TF"}</th>
+              <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider py-2 px-3">{locale === "zh" ? "强度" : "Strength"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {top.map((d, idx) => (
+              <tr key={`${d.eventId}-${d.triggerTime}-${idx}`} className="border-b border-border/30">
+                <td className="py-2 px-3 text-xs text-foreground">{(d.triggerTime || "").slice(0, 10)}</td>
+                <td className="py-2 px-3 text-xs">
+                  <span className={d.direction === "bearish" ? "text-red-600" : "text-emerald-600"}>
+                    {d.direction === "bearish" ? (locale === "zh" ? "顶背离" : "Bearish") : (locale === "zh" ? "底背离" : "Bullish")}
+                  </span>
+                </td>
+                <td className="py-2 px-3 text-xs text-foreground">{d.indicator}</td>
+                <td className="py-2 px-3 text-xs text-foreground">{String(d.timeframe).toUpperCase()}</td>
+                <td className="py-2 px-3 text-xs text-foreground">{d.strengthScore?.toFixed(3) ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

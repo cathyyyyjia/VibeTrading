@@ -98,6 +98,7 @@ class BacktestReportResponse(BaseModel):
   equity: list[EquityPoint]
   market: list[MarketCandle] = Field(default_factory=list)
   trades: list[BacktestTrade]
+  divergences: list[dict[str, Any]] = Field(default_factory=list)
   ai_summary: dict[str, str] | None = None
 
 

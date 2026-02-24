@@ -278,3 +278,79 @@ async def test_backtest_executes_date_gated_entry_and_staged_exits(monkeypatch: 
   sell_times = [t["fill_time"] for t in result.trades if t["side"] == "SELL"]
   assert len(sell_times) >= 2
   assert all(ts >= first["fill_time"] for ts in sell_times)
+
+
+def _divergence_strategy_spec() -> dict:
+  return {
+    "name": "test-divergence-diagnostics",
+    "strategy_version": "v0",
+    "timezone": "America/New_York",
+    "calendar": {"type": "exchange", "value": "XNYS"},
+    "universe": {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"},
+    "decision": {"decision_time_rule": {"type": "MARKET_CLOSE_OFFSET", "offset": "-2m"}},
+    "execution": {"model": "MOC", "slippage_bps": 0.0, "commission_per_trade": 0.0},
+    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 1},
+    "dsl": {
+      "atomic": {
+        "symbols": {"signal": "QQQ", "trade": "TQQQ"},
+        "constants": {"lookback": "5d", "sell_fraction": 0.2, "initial_position_qty": 100, "initial_cash": 0},
+      },
+      "time": {
+        "primary_tf": "1m",
+        "derived_tfs": ["4h", "1d"],
+        "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"},
+      },
+      "signal": {
+        "indicators": [
+          {"id": "div_price", "type": "CLOSE", "tf": "4h", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None}},
+          {"id": "div_src", "type": "MACD", "tf": "4h", "symbol_ref": "signal", "align": "LAST_CLOSED", "params": {"fast": 12, "slow": 26, "signal": 9, "period": None, "window": None, "bar_selection": None}},
+        ],
+        "events": [
+          {
+            "id": "ev_div",
+            "type": "DIVERGENCE_BEARISH",
+            "a": "div_price.value",
+            "b": "div_src.macd",
+            "left": None,
+            "right": None,
+            "direction": "DOWN",
+            "op": None,
+            "value": None,
+            "tf": "4h",
+            "pivot_left": 3,
+            "pivot_right": 3,
+            "lookback_bars": 40,
+          }
+        ],
+      },
+      "logic": {
+        "rules": [
+          {"id": "sell_rule", "when": {"event_id": "ev_div", "scope": "BAR"}, "then": [{"action_id": "sell_20pct"}]}
+        ]
+      },
+      "action": {
+        "actions": [
+          {
+            "id": "sell_20pct",
+            "type": "ORDER",
+            "symbol_ref": "trade",
+            "side": "SELL",
+            "qty": {"mode": "FRACTION_OF_POSITION", "value": 0.2},
+            "order_type": "MOC",
+            "time_in_force": None,
+            "idempotency_scope": None,
+            "cooldown": "1d",
+          }
+        ]
+      },
+    },
+    "meta": {"mode": "BACKTEST_ONLY", "llm_used": False},
+  }
+
+
+@pytest.mark.asyncio
+async def test_backtest_outputs_divergence_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(settings, "market_data_provider", "synthetic")
+  spec = _divergence_strategy_spec()
+  result = await run_backtest_from_spec(spec, start_date="2024-01-02", end_date="2024-06-28")
+  assert isinstance(result.artifacts.get("divergence_signals"), list)

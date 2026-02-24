@@ -154,12 +154,27 @@ export interface TradeRecord {
   reason?: string | null;
 }
 
+export interface DivergenceSignal {
+  eventId: string;
+  direction: "bearish" | "bullish";
+  timeframe: "4h" | "1d" | string;
+  indicator: string;
+  decisionTime: string;
+  triggerTime: string;
+  pricePivot1: number | null;
+  pricePivot2: number | null;
+  oscPivot1: number | null;
+  oscPivot2: number | null;
+  strengthScore: number | null;
+}
+
 export interface RunReportResponse {
   kpis: LegacyKPIs;
   summary?: BacktestSummary;
   equity: Array<{ t?: number; v?: number; timestamp?: string; value?: number }>;
   market?: Array<{ t: string; o: number; h: number; l: number; c: number }>;
   trades: TradeRecord[];
+  divergences?: DivergenceSignal[];
   aiSummary?: { en: string; zh: string } | null;
 }
 
@@ -197,6 +212,19 @@ type V0BacktestReportResponse = {
     why: Record<string, unknown>;
     pnl?: number;
     pnl_pct?: number;
+  }>;
+  divergences?: Array<{
+    event_id?: string;
+    direction?: "bearish" | "bullish";
+    timeframe?: string;
+    indicator?: string;
+    decision_time?: string;
+    trigger_time?: string;
+    price_pivot_1?: number | null;
+    price_pivot_2?: number | null;
+    osc_pivot_1?: number | null;
+    osc_pivot_2?: number | null;
+    strength_score?: number | null;
   }>;
   ai_summary?: { en?: string; zh?: string } | null;
 };
@@ -368,7 +396,23 @@ export async function getRunReport(runId: string): Promise<RunReportResponse> {
         }
       : null;
 
-  return { kpis, summary, equity, market, trades, aiSummary };
+  const divergences: DivergenceSignal[] = Array.isArray(data.divergences)
+    ? data.divergences.map((d) => ({
+        eventId: String(d.event_id ?? ""),
+        direction: d.direction === "bullish" ? "bullish" : "bearish",
+        timeframe: String(d.timeframe ?? ""),
+        indicator: String(d.indicator ?? ""),
+        decisionTime: String(d.decision_time ?? ""),
+        triggerTime: String(d.trigger_time ?? ""),
+        pricePivot1: typeof d.price_pivot_1 === "number" ? d.price_pivot_1 : null,
+        pricePivot2: typeof d.price_pivot_2 === "number" ? d.price_pivot_2 : null,
+        oscPivot1: typeof d.osc_pivot_1 === "number" ? d.osc_pivot_1 : null,
+        oscPivot2: typeof d.osc_pivot_2 === "number" ? d.osc_pivot_2 : null,
+        strengthScore: typeof d.strength_score === "number" ? d.strength_score : null,
+      }))
+    : [];
+
+  return { kpis, summary, equity, market, trades, divergences, aiSummary };
 }
 
 export async function deployRun(runId: string, mode: "paper" | "live"): Promise<DeployResponse> {

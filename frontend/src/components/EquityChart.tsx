@@ -15,11 +15,12 @@ import { useI18n } from "@/contexts/I18nContext";
 import { useChartColor } from "@/contexts/ChartColorContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { formatDateByLocale } from "@/lib/date";
-import type { TradeRecord } from "@/lib/api";
+import type { DivergenceSignal, TradeRecord } from "@/lib/api";
 
 interface EquityChartProps {
   data: Array<{ t?: number; v?: number; timestamp?: string; value?: number }> | null;
   trades?: TradeRecord[] | null;
+  divergences?: DivergenceSignal[] | null;
   selectedTrade?: TradeRecord | null;
   loading: boolean;
 }
@@ -33,6 +34,10 @@ type ChartRow = {
   sellCount: number;
   buyTrades: TradeRecord[];
   sellTrades: TradeRecord[];
+  bearishDivCount: number;
+  bullishDivCount: number;
+  bearishDivs: DivergenceSignal[];
+  bullishDivs: DivergenceSignal[];
   inPositionStart: boolean;
   inPositionEnd: boolean;
 };
@@ -171,6 +176,18 @@ function SellDot(props: any, color: string) {
   return <circle cx={cx} cy={cy} r={5} fill={color} stroke="white" strokeWidth={1} />;
 }
 
+function DivergenceBearDot(props: any) {
+  const { cx, cy, payload } = props;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.bearishDivCount) return null;
+  return <polygon points={`${cx},${cy - 7} ${cx - 6},${cy - 15} ${cx + 6},${cy - 15}`} fill="#dc2626" />;
+}
+
+function DivergenceBullDot(props: any) {
+  const { cx, cy, payload } = props;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.bullishDivCount) return null;
+  return <polygon points={`${cx},${cy + 7} ${cx - 6},${cy + 15} ${cx + 6},${cy + 15}`} fill="#16a34a" />;
+}
+
 function formatTradeDetail(trade: TradeRecord, action: "buy" | "sell", locale: string): string {
   const actionText = locale === "zh" ? (action === "buy" ? "买入" : "卖出") : (action === "buy" ? "Buy" : "Sell");
   const price = Number(trade.price);
@@ -180,7 +197,7 @@ function formatTradeDetail(trade: TradeRecord, action: "buy" | "sell", locale: s
   return `${actionText} ${trade.symbol} ${priceText}`;
 }
 
-export default function EquityChart({ data, trades, selectedTrade, loading }: EquityChartProps) {
+export default function EquityChart({ data, trades, divergences, selectedTrade, loading }: EquityChartProps) {
   const { locale } = useI18n();
   const { palette } = useChartColor();
   const { theme } = useTheme();
@@ -217,6 +234,15 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
       tradesByDay.set(day, arr);
     }
 
+    const divergenceByDay = new Map<string, DivergenceSignal[]>();
+    for (const d of divergences || []) {
+      const day = toDay(d.triggerTime || d.decisionTime || "");
+      if (!day) continue;
+      const arr = divergenceByDay.get(day) ?? [];
+      arr.push(d);
+      divergenceByDay.set(day, arr);
+    }
+
     const sortedDays = Array.from(equityByDay.keys()).sort();
     if (sortedDays.length === 0) return [] as ChartRow[];
 
@@ -238,6 +264,9 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
       let sellCount = 0;
       const buyTrades: TradeRecord[] = [];
       const sellTrades: TradeRecord[] = [];
+      const dayDivs = divergenceByDay.get(day) ?? [];
+      const bearishDivs = dayDivs.filter((d) => d.direction === "bearish");
+      const bullishDivs = dayDivs.filter((d) => d.direction === "bullish");
       for (const trade of dayTrades) {
         const action = classifyTradeAction(String(trade.action || ""));
         if (action === "buy") {
@@ -260,13 +289,17 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
         sellCount,
         buyTrades,
         sellTrades,
+        bearishDivCount: bearishDivs.length,
+        bullishDivCount: bullishDivs.length,
+        bearishDivs,
+        bullishDivs,
         inPositionStart,
         inPositionEnd: position > 0,
       });
     }
 
     return built;
-  }, [data, trades]);
+  }, [data, trades, divergences]);
 
   useEffect(() => {
     if (rows.length > 1) setAnimateIntro(true);
@@ -341,6 +374,16 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
           ))}
           {row.sellTrades.map((trade, idx) => (
             <div key={`sell-${trade.symbol}-${trade.timestamp}-${idx}`}>{formatTradeDetail(trade, "sell", locale)}</div>
+          ))}
+          {row.bearishDivs.map((d, idx) => (
+            <div key={`div-bear-${idx}`} className="text-red-600">
+              {locale === "zh" ? "顶背离" : "Bearish divergence"} {String(d.timeframe).toUpperCase()} {d.indicator}
+            </div>
+          ))}
+          {row.bullishDivs.map((d, idx) => (
+            <div key={`div-bull-${idx}`} className="text-emerald-600">
+              {locale === "zh" ? "底背离" : "Bullish divergence"} {String(d.timeframe).toUpperCase()} {d.indicator}
+            </div>
           ))}
         </div>
       );
@@ -441,6 +484,8 @@ export default function EquityChart({ data, trades, selectedTrade, loading }: Eq
               animationEasing="ease-out"
               onAnimationEnd={() => setAnimateIntro(false)}
             />
+            <Line type="monotone" dataKey="returnPct" stroke="transparent" dot={DivergenceBearDot} activeDot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="returnPct" stroke="transparent" dot={DivergenceBullDot} activeDot={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
