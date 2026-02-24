@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -506,6 +507,145 @@ def _read_int_pref(pref: dict[str, Any], keys: list[str], default: int, *, min_v
   return default
 
 
+def _extract_primary_symbol(nl_text: str) -> str:
+  tokens = re.findall(r"\b[A-Za-z]{2,8}\b", nl_text.upper())
+  blacklist = {"MACD", "MA", "RSI", "KDJ", "BUY", "SELL"}
+  for token in tokens:
+    if token in blacklist:
+      continue
+    if 2 <= len(token) <= 5 and token.isalpha():
+      return token
+  return "QQQ"
+
+
+def _build_fallback_strategy_spec(
+  *,
+  nl_text: str,
+  mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
+  indicator_preferences: dict[str, Any] | None,
+  reason: AppError | None,
+) -> dict[str, Any]:
+  signal_symbol = _extract_primary_symbol(nl_text)
+  trade_symbol = signal_symbol
+  prefs = indicator_preferences if isinstance(indicator_preferences, dict) else {}
+  macd_fast = _read_int_pref(prefs, ["macdFast", "macd_fast"], 12)
+  macd_slow = _read_int_pref(prefs, ["macdSlow", "macd_slow"], 26)
+  macd_signal = _read_int_pref(prefs, ["macdSignal", "macd_signal"], 9)
+
+  spec: dict[str, Any] = {
+    "name": f"Fallback {signal_symbol} MACD strategy",
+    "timezone": "America/New_York",
+    "calendar": {"type": "exchange", "value": "XNYS"},
+    "universe": {"signal_symbol": signal_symbol, "trade_symbol": trade_symbol},
+    "decision": {"decision_time_rule": {"type": "MARKET_CLOSE_OFFSET", "offset": "-2m"}},
+    "execution": {"model": "MOC", "slippage_bps": 2.0, "commission_per_trade": 0.0},
+    "risk": {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 2},
+    "dsl": {
+      "atomic": {
+        "symbols": {"signal": signal_symbol, "trade": trade_symbol},
+        "constants": {"lookback": "5d", "sell_fraction": 1.0, "initial_position_qty": 0.0, "initial_cash": 10000.0},
+      },
+      "time": {
+        "primary_tf": "1m",
+        "derived_tfs": ["4h", "1d"],
+        "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"},
+      },
+      "signal": {
+        "indicators": [
+          {
+            "id": "macd_4h",
+            "type": "MACD",
+            "tf": "4h",
+            "symbol_ref": "signal",
+            "align": "LAST_CLOSED",
+            "params": {
+              "fast": macd_fast,
+              "slow": macd_slow,
+              "signal": macd_signal,
+              "period": None,
+              "window": None,
+              "bar_selection": None,
+            },
+          }
+        ],
+        "events": [
+          {
+            "id": "ev_macd_up",
+            "type": "CROSS_UP",
+            "a": "macd_4h.macd",
+            "b": "macd_4h.signal",
+            "left": None,
+            "right": None,
+            "direction": "UP",
+            "op": None,
+            "value": None,
+            "tf": "4h",
+          },
+          {
+            "id": "ev_macd_down",
+            "type": "CROSS_DOWN",
+            "a": "macd_4h.macd",
+            "b": "macd_4h.signal",
+            "left": None,
+            "right": None,
+            "direction": "DOWN",
+            "op": None,
+            "value": None,
+            "tf": "4h",
+          },
+        ],
+      },
+      "logic": {
+        "rules": [
+          {"id": "rule_buy", "when": {"event_id": "ev_macd_up", "scope": "BAR"}, "then": [{"action_id": "buy_full"}]},
+          {"id": "rule_sell", "when": {"event_id": "ev_macd_down", "scope": "BAR"}, "then": [{"action_id": "sell_all"}]},
+        ]
+      },
+      "action": {
+        "actions": [
+          {
+            "id": "buy_full",
+            "type": "ORDER",
+            "symbol_ref": "trade",
+            "side": "BUY",
+            "qty": {"mode": "FRACTION_OF_EQUITY", "value": 1.0},
+            "order_type": "MOC",
+            "time_in_force": None,
+            "idempotency_scope": "SYMBOL_ACTION",
+            "cooldown": "1d",
+          },
+          {
+            "id": "sell_all",
+            "type": "ORDER",
+            "symbol_ref": "trade",
+            "side": "SELL",
+            "qty": {"mode": "FULL_POSITION", "value": 1.0},
+            "order_type": "MOC",
+            "time_in_force": None,
+            "idempotency_scope": "SYMBOL_ACTION",
+            "cooldown": "1d",
+          },
+        ]
+      },
+    },
+    "meta": {
+      "created_at": datetime.now(timezone.utc).isoformat(),
+      "mode": mode,
+      "llm_used": False,
+      "llm_model": settings.llm_model,
+      "generation_mode": "fallback",
+      "fallback_reason_code": reason.code if isinstance(reason, AppError) else None,
+      "fallback_reason_message": reason.message if isinstance(reason, AppError) else "unknown",
+    },
+    "strategy_version": "v0",
+  }
+  if isinstance(indicator_preferences, dict):
+    meta = spec.get("meta")
+    if isinstance(meta, dict):
+      meta["indicator_preferences"] = indicator_preferences
+  return spec
+
+
 def _apply_divergence_preferences(spec: dict[str, Any], indicator_preferences: dict[str, Any] | None) -> None:
   if not isinstance(indicator_preferences, dict):
     return
@@ -796,5 +936,15 @@ Output requirements:
         break
 
   if last_error is not None:
-    raise last_error
+    fallback = _build_fallback_strategy_spec(
+      nl_text=nl_text,
+      mode=mode,
+      indicator_preferences=indicator_preferences,
+      reason=last_error,
+    )
+    if overrides and isinstance(overrides, dict):
+      fallback = _deep_merge(fallback, overrides)
+    _normalize_cross_event_window_semantics(fallback)
+    _apply_divergence_preferences(fallback, indicator_preferences)
+    return fallback
   raise AppError("INTERNAL", "Unexpected parser state", {})
