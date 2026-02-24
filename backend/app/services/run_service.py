@@ -155,9 +155,10 @@ async def _set_step_state(
 
 async def _upsert_artifact(db: AsyncSession, run_id: uuid.UUID, name: str, type_: str, uri: str, content: dict[str, Any] | None = None) -> None:
   persisted_uri = uri
-  persisted_content: dict[str, Any] | None = content
+  # Normalize datetimes/numpy scalars before DB JSON persistence or storage upload.
+  persisted_content: dict[str, Any] | None = jsonable_encoder(content) if content is not None else None
   if storage_enabled() and content is not None:
-    storage_uri = await upload_artifact_content(run_id=run_id, name=name, type_=type_, content=content)
+    storage_uri = await upload_artifact_content(run_id=run_id, name=name, type_=type_, content=persisted_content)
     if storage_uri is not None:
       persisted_uri = storage_uri
       persisted_content = None
