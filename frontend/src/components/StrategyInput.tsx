@@ -92,6 +92,16 @@ export default function StrategyInput({
     : `This run will backtest from ${backtestStartDate} to ${backtestEndDate}. Continue?`;
   const confirmRunText = locale === 'zh' ? '确认回测' : 'Confirm';
 
+  const divergence = indicatorPreferences.divergence ?? {
+    enabled: false,
+    indicator: 'MACD' as const,
+    direction: 'bearish' as const,
+    timeframe: '4h' as const,
+    pivotLeft: 3,
+    pivotRight: 3,
+    lookbackBars: 60,
+  };
+
   const updateIndicatorPreference = (partial: Partial<IndicatorPreferences>) => {
     onIndicatorPreferencesChange({ ...indicatorPreferences, ...partial });
   };
@@ -106,6 +116,24 @@ export default function StrategyInput({
     const n = Number(value);
     if (Number.isNaN(n)) return;
     updateIndicatorPreference({ maWindowDays: Math.max(1, Math.floor(n)) });
+  };
+  const updateDivergencePreference = (
+    partial: Partial<NonNullable<IndicatorPreferences['divergence']>>
+  ) => {
+    updateIndicatorPreference({
+      divergence: {
+        ...divergence,
+        ...partial,
+      },
+    });
+  };
+  const handleDivergenceIntChange = (
+    key: keyof Pick<NonNullable<IndicatorPreferences['divergence']>, 'pivotLeft' | 'pivotRight' | 'lookbackBars'>,
+    value: string
+  ) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) return;
+    updateDivergencePreference({ [key]: Math.max(1, Math.floor(n)) });
   };
   const handleRunClick = () => {
     if (isRunning || !prompt.trim() || isDateRangeInvalid) return;
@@ -315,6 +343,106 @@ export default function StrategyInput({
                         />
                       </>
                     )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 border border-border rounded-md p-3">
+                  <p className="text-[11px] font-medium text-muted-foreground">
+                    {locale === 'zh' ? '背离模块 (MACD / RSI / KDJ)' : 'Divergence Module (MACD / RSI / KDJ)'}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={divergence.enabled ? 'default' : 'outline'}
+                      disabled={isRunning}
+                      onClick={() => updateDivergencePreference({ enabled: !divergence.enabled })}
+                      className="h-7 text-xs"
+                    >
+                      {divergence.enabled ? (locale === 'zh' ? '已启用' : 'Enabled') : (locale === 'zh' ? '启用' : 'Enable')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={divergence.direction === 'bearish' ? 'default' : 'outline'}
+                      disabled={isRunning || !divergence.enabled}
+                      onClick={() => updateDivergencePreference({ direction: 'bearish' })}
+                      className="h-7 text-xs"
+                    >
+                      {locale === 'zh' ? '顶背离(看空)' : 'Bearish'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={divergence.direction === 'bullish' ? 'default' : 'outline'}
+                      disabled={isRunning || !divergence.enabled}
+                      onClick={() => updateDivergencePreference({ direction: 'bullish' })}
+                      className="h-7 text-xs"
+                    >
+                      {locale === 'zh' ? '底背离(看多)' : 'Bullish'}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground">{locale === 'zh' ? '指标' : 'Indicator'}</p>
+                      <select
+                        value={divergence.indicator}
+                        disabled={isRunning || !divergence.enabled}
+                        onChange={(e) => updateDivergencePreference({ indicator: e.target.value as 'MACD' | 'RSI' | 'KDJ' })}
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      >
+                        <option value="MACD">MACD</option>
+                        <option value="RSI">RSI</option>
+                        <option value="KDJ">KDJ</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground">{locale === 'zh' ? '周期' : 'Timeframe'}</p>
+                      <select
+                        value={divergence.timeframe}
+                        disabled={isRunning || !divergence.enabled}
+                        onChange={(e) => updateDivergencePreference({ timeframe: e.target.value as '4h' | '1d' })}
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      >
+                        <option value="4h">4H</option>
+                        <option value="1d">1D</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground">{locale === 'zh' ? '回看Bars' : 'Lookback Bars'}</p>
+                      <Input
+                        type="number"
+                        min={10}
+                        value={divergence.lookbackBars}
+                        disabled={isRunning || !divergence.enabled}
+                        onChange={(e) => handleDivergenceIntChange('lookbackBars', e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground">Pivot Left</p>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={divergence.pivotLeft}
+                        disabled={isRunning || !divergence.enabled}
+                        onChange={(e) => handleDivergenceIntChange('pivotLeft', e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground">Pivot Right</p>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={divergence.pivotRight}
+                        disabled={isRunning || !divergence.enabled}
+                        onChange={(e) => handleDivergenceIntChange('pivotRight', e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>

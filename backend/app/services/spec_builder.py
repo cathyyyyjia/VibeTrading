@@ -162,7 +162,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                 "required": ["id", "type", "tf", "symbol_ref", "align", "params"],
                 "properties": {
                   "id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
-                  "type": {"type": "string", "enum": ["MACD", "MA", "SMA", "CLOSE"]},
+                  "type": {"type": "string", "enum": ["MACD", "MA", "SMA", "CLOSE", "RSI", "KDJ"]},
                   "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
                   "symbol_ref": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
                   "align": {"type": ["string", "null"], "enum": ["LAST_CLOSED", "CARRY_FORWARD", None]},
@@ -191,7 +191,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                 "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "value", "tf"],
                 "properties": {
                   "id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
-                  "type": {"type": "string", "enum": ["CROSS", "CROSS_UP", "CROSS_DOWN", "THRESHOLD"]},
+                  "type": {"type": "string", "enum": ["CROSS", "CROSS_UP", "CROSS_DOWN", "THRESHOLD", "DIVERGENCE_BEARISH", "DIVERGENCE_BULLISH"]},
                   "a": {"type": ["string", "null"], "pattern": "^[A-Za-z_][A-Za-z0-9_:-]*(\\.[A-Za-z_][A-Za-z0-9_]*)?(?:@[A-Za-z0-9_:-]+)?$"},
                   "b": {"type": ["string", "null"], "pattern": "^[A-Za-z_][A-Za-z0-9_:-]*(\\.[A-Za-z_][A-Za-z0-9_]*)?(?:@[A-Za-z0-9_:-]+)?$"},
                   "left": {"type": ["string", "null"], "pattern": "^[A-Za-z_][A-Za-z0-9_:-]*(\\.[A-Za-z_][A-Za-z0-9_]*)?(?:@[A-Za-z0-9_:-]+)?$"},
@@ -200,6 +200,9 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                   "op": {"type": ["string", "null"], "enum": ["<", "<=", ">", ">=", "==", "!=", None]},
                   "value": {"type": ["number", "null"]},
                   "tf": {"type": ["string", "null"]},
+                  "pivot_left": {"type": ["integer", "null"]},
+                  "pivot_right": {"type": ["integer", "null"]},
+                  "lookback_bars": {"type": ["integer", "null"]},
                 },
               },
             },
@@ -462,7 +465,21 @@ def _assemble_final_strategy_spec(
 
 
 def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] | None) -> str:
-  defaults = {"ma_window_days": 5, "macd": {"fast": 12, "slow": 26, "signal": 9}}
+  defaults = {
+    "ma_window_days": 5,
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "rsi": {"period": 14},
+    "kdj": {"period": 9, "k_smooth": 3, "d_smooth": 3},
+    "divergence": {
+      "enabled": False,
+      "indicator": "MACD",
+      "direction": "bearish",
+      "timeframe": "4h",
+      "pivot_left": 3,
+      "pivot_right": 3,
+      "lookback_bars": 60,
+    },
+  }
   if not isinstance(indicator_preferences, dict):
     return (
       "Indicator parameter preferences:\n"
@@ -474,6 +491,155 @@ def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] |
     f"- defaults: {json.dumps(defaults, ensure_ascii=False)}\n"
     f"- user_selection: {json.dumps(indicator_preferences, ensure_ascii=False)}\n"
   )
+
+
+def _read_int_pref(pref: dict[str, Any], keys: list[str], default: int, *, min_value: int = 1) -> int:
+  for key in keys:
+    raw = pref.get(key)
+    if isinstance(raw, (int, float)):
+      return max(min_value, int(raw))
+    if isinstance(raw, str):
+      try:
+        return max(min_value, int(float(raw.strip())))
+      except Exception:
+        continue
+  return default
+
+
+def _apply_divergence_preferences(spec: dict[str, Any], indicator_preferences: dict[str, Any] | None) -> None:
+  if not isinstance(indicator_preferences, dict):
+    return
+  divergence = indicator_preferences.get("divergence")
+  if not isinstance(divergence, dict):
+    return
+  if not bool(divergence.get("enabled")):
+    return
+
+  dsl = spec.get("dsl")
+  if not isinstance(dsl, dict):
+    return
+  signal_layer = dsl.get("signal")
+  logic_layer = dsl.get("logic")
+  action_layer = dsl.get("action")
+  if not isinstance(signal_layer, dict) or not isinstance(logic_layer, dict) or not isinstance(action_layer, dict):
+    return
+  indicators = signal_layer.get("indicators")
+  events = signal_layer.get("events")
+  rules = logic_layer.get("rules")
+  actions = action_layer.get("actions")
+  if not isinstance(indicators, list) or not isinstance(events, list) or not isinstance(rules, list) or not isinstance(actions, list):
+    return
+
+  indicator_name = str(divergence.get("indicator") or "MACD").strip().upper()
+  if indicator_name not in {"MACD", "RSI", "KDJ"}:
+    indicator_name = "MACD"
+  direction = str(divergence.get("direction") or "bearish").strip().lower()
+  event_type = "DIVERGENCE_BULLISH" if direction == "bullish" else "DIVERGENCE_BEARISH"
+  tf = str(divergence.get("timeframe") or "4h").strip().lower()
+  if tf not in {"4h", "1d"}:
+    tf = "4h"
+  pivot_left = _read_int_pref(divergence, ["pivot_left", "pivotLeft"], 3)
+  pivot_right = _read_int_pref(divergence, ["pivot_right", "pivotRight"], 3)
+  lookback_bars = _read_int_pref(divergence, ["lookback_bars", "lookbackBars"], 60, min_value=10)
+
+  src_indicator_id = "div_src"
+  close_indicator_id = "div_price"
+
+  has_src = any(
+    isinstance(ind, dict) and ind.get("id") == src_indicator_id
+    for ind in indicators
+  )
+  if not has_src:
+    params: dict[str, Any] = {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None}
+    if indicator_name == "MACD":
+      params["fast"] = _read_int_pref(indicator_preferences, ["macdFast", "macd_fast"], 12)
+      params["slow"] = _read_int_pref(indicator_preferences, ["macdSlow", "macd_slow"], 26)
+      params["signal"] = _read_int_pref(indicator_preferences, ["macdSignal", "macd_signal"], 9)
+    elif indicator_name == "RSI":
+      params["period"] = _read_int_pref(indicator_preferences, ["rsiPeriod", "rsi_period"], 14)
+    else:
+      params["period"] = _read_int_pref(indicator_preferences, ["kdjPeriod", "kdj_period"], 9)
+      params["fast"] = _read_int_pref(indicator_preferences, ["kdjKSmooth", "kdj_k_smooth"], 3)
+      params["slow"] = _read_int_pref(indicator_preferences, ["kdjDSmooth", "kdj_d_smooth"], 3)
+    indicators.append(
+      {
+        "id": src_indicator_id,
+        "type": indicator_name,
+        "tf": tf,
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": params,
+      }
+    )
+
+  has_close = any(
+    isinstance(ind, dict) and ind.get("id") == close_indicator_id
+    for ind in indicators
+  )
+  if not has_close:
+    indicators.append(
+      {
+        "id": close_indicator_id,
+        "type": "CLOSE",
+        "tf": tf,
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None},
+      }
+    )
+
+  div_event_id = "ev_divergence_signal"
+  if not any(isinstance(ev, dict) and ev.get("id") == div_event_id for ev in events):
+    oscillator_ref = "div_src.macd" if indicator_name == "MACD" else "div_src.value"
+    if indicator_name == "KDJ":
+      oscillator_ref = "div_src.j"
+    events.append(
+      {
+        "id": div_event_id,
+        "type": event_type,
+        "a": f"{close_indicator_id}.value",
+        "b": oscillator_ref,
+        "left": None,
+        "right": None,
+        "direction": "DOWN" if event_type == "DIVERGENCE_BEARISH" else "UP",
+        "op": None,
+        "value": None,
+        "tf": tf,
+        "pivot_left": pivot_left,
+        "pivot_right": pivot_right,
+        "lookback_bars": lookback_bars,
+      }
+    )
+
+  action_side_target = "SELL" if event_type == "DIVERGENCE_BEARISH" else "BUY"
+  action_side_by_id: dict[str, str] = {}
+  for action in actions:
+    if isinstance(action, dict) and isinstance(action.get("id"), str):
+      action_side_by_id[action["id"]] = str(action.get("side") or "").upper()
+
+  for rule in rules:
+    if not isinstance(rule, dict):
+      continue
+    then_items = rule.get("then")
+    if not isinstance(then_items, list):
+      continue
+    if not any(
+      isinstance(t, dict)
+      and isinstance(t.get("action_id"), str)
+      and action_side_by_id.get(str(t.get("action_id"))) == action_side_target
+      for t in then_items
+    ):
+      continue
+    when = rule.get("when")
+    div_condition = {"event_id": div_event_id, "scope": "BAR"}
+    if isinstance(when, dict):
+      if isinstance(when.get("all"), list):
+        if not any(isinstance(c, dict) and c.get("event_id") == div_event_id for c in when["all"]):
+          when["all"] = [*when["all"], div_condition]
+      elif not (when.get("event_id") == div_event_id):
+        rule["when"] = {"all": [when, div_condition]}
+    else:
+      rule["when"] = div_condition
 
 
 def _normalize_cross_event_window_semantics(spec: dict[str, Any]) -> None:
@@ -613,6 +779,7 @@ Output requirements:
       if overrides and isinstance(overrides, dict):
         spec = _deep_merge(spec, overrides)
       _normalize_cross_event_window_semantics(spec)
+      _apply_divergence_preferences(spec, indicator_preferences)
       spec["strategy_version"] = "v0"
 
       meta = spec.get("meta")

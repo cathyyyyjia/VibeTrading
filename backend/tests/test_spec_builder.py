@@ -217,3 +217,48 @@ async def test_prompt_4_multi_symbol_stage_semantics(monkeypatch: pytest.MonkeyP
   partial = next(a for a in actions if isinstance(a, dict) and a.get("id") == "sell_partial")
   assert partial["qty"]["mode"] == "FRACTION_OF_POSITION"
   assert float(partial["qty"]["value"]) == pytest.approx(0.30)
+
+
+@pytest.mark.asyncio
+async def test_divergence_preferences_inject_divergence_event(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_single_partial()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(
+    PROMPT,
+    "BACKTEST_ONLY",
+    indicator_preferences={
+      "maWindowDays": 5,
+      "macdFast": 12,
+      "macdSlow": 26,
+      "macdSignal": 9,
+      "divergence": {
+        "enabled": True,
+        "indicator": "MACD",
+        "direction": "bearish",
+        "timeframe": "4h",
+        "pivotLeft": 3,
+        "pivotRight": 3,
+        "lookbackBars": 50,
+      },
+    },
+  )
+
+  dsl = spec.get("dsl") or {}
+  events = (((dsl.get("signal") or {}).get("events")) or [])
+  rules = (((dsl.get("logic") or {}).get("rules")) or [])
+
+  div_event = next(e for e in events if isinstance(e, dict) and e.get("id") == "ev_divergence_signal")
+  assert div_event["type"] == "DIVERGENCE_BEARISH"
+  assert int(div_event["lookback_bars"]) == 50
+
+  reduce_rule = next(r for r in rules if isinstance(r, dict) and r.get("id") == "rule_reduce")
+  all_conditions = (reduce_rule.get("when") or {}).get("all") if isinstance(reduce_rule.get("when"), dict) else []
+  assert isinstance(all_conditions, list)
+  assert any(
+    isinstance(c, dict)
+    and c.get("event_id") == "ev_divergence_signal"
+    and c.get("scope") == "BAR"
+    for c in all_conditions
+  )

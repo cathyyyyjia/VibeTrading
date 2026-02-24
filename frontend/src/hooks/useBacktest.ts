@@ -51,6 +51,19 @@ const DEFAULT_INDICATOR_PREFERENCES: api.IndicatorPreferences = {
   macdFast: 12,
   macdSlow: 26,
   macdSignal: 9,
+  rsiPeriod: 14,
+  kdjPeriod: 9,
+  kdjKSmooth: 3,
+  kdjDSmooth: 3,
+  divergence: {
+    enabled: false,
+    indicator: "MACD",
+    direction: "bearish",
+    timeframe: "4h",
+    pivotLeft: 3,
+    pivotRight: 3,
+    lookbackBars: 60,
+  },
 };
 
 function buildInitialWorkspaceSteps(): StepInfo[] {

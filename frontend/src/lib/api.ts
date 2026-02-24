@@ -80,6 +80,19 @@ export interface IndicatorPreferences {
   macdFast: number;
   macdSlow: number;
   macdSignal: number;
+  rsiPeriod?: number;
+  kdjPeriod?: number;
+  kdjKSmooth?: number;
+  kdjDSmooth?: number;
+  divergence?: {
+    enabled: boolean;
+    indicator: "MACD" | "RSI" | "KDJ";
+    direction: "bearish" | "bullish";
+    timeframe: "4h" | "1d";
+    pivotLeft: number;
+    pivotRight: number;
+    lookbackBars: number;
+  };
 }
 
 export interface CreateRunOptions {

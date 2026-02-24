@@ -63,6 +63,36 @@ def _rsi(closes: list[float], period: int) -> list[float | None]:
   return out
 
 
+def _kdj(closes: list[float], period: int, k_smooth: int, d_smooth: int) -> tuple[list[float], list[float], list[float]]:
+  if not closes:
+    return [], [], []
+  n = max(2, int(period))
+  k_alpha = 1.0 / max(1, int(k_smooth))
+  d_alpha = 1.0 / max(1, int(d_smooth))
+  k_values: list[float] = []
+  d_values: list[float] = []
+  j_values: list[float] = []
+  prev_k = 50.0
+  prev_d = 50.0
+  for i in range(len(closes)):
+    start = max(0, i - n + 1)
+    window = closes[start : i + 1]
+    low_n = float(min(window))
+    high_n = float(max(window))
+    if abs(high_n - low_n) <= 1e-12:
+      rsv = 50.0
+    else:
+      rsv = (float(closes[i]) - low_n) / (high_n - low_n) * 100.0
+    k = prev_k * (1.0 - k_alpha) + rsv * k_alpha
+    d = prev_d * (1.0 - d_alpha) + k * d_alpha
+    j = 3.0 * k - 2.0 * d
+    k_values.append(float(k))
+    d_values.append(float(d))
+    j_values.append(float(j))
+    prev_k, prev_d = k, d
+  return k_values, d_values, j_values
+
+
 def _cross_down(macd_line: list[float], signal_line: list[float], idx: int) -> bool:
   if idx <= 0 or idx >= len(macd_line) or idx >= len(signal_line):
     return False
@@ -174,6 +204,10 @@ def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, int]
     "macd_fast": 12,
     "macd_slow": 26,
     "macd_signal": 9,
+    "rsi_period": 14,
+    "kdj_period": 9,
+    "kdj_k_smooth": 3,
+    "kdj_d_smooth": 3,
   }
   meta = strategy_spec.get("meta")
   if not isinstance(meta, dict):
@@ -192,6 +226,16 @@ def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, int]
   defaults["macd_fast"] = _read_int_pref(prefs, ["macd_fast", "macdFast"], defaults["macd_fast"])
   defaults["macd_slow"] = _read_int_pref(prefs, ["macd_slow", "macdSlow"], defaults["macd_slow"])
   defaults["macd_signal"] = _read_int_pref(prefs, ["macd_signal", "macdSignal"], defaults["macd_signal"])
+  defaults["rsi_period"] = _read_int_pref(prefs, ["rsi_period", "rsiPeriod"], defaults["rsi_period"])
+
+  kdj = prefs.get("kdj")
+  if isinstance(kdj, dict):
+    defaults["kdj_period"] = _read_int_pref(kdj, ["period"], defaults["kdj_period"])
+    defaults["kdj_k_smooth"] = _read_int_pref(kdj, ["k_smooth", "kSmooth"], defaults["kdj_k_smooth"])
+    defaults["kdj_d_smooth"] = _read_int_pref(kdj, ["d_smooth", "dSmooth"], defaults["kdj_d_smooth"])
+  defaults["kdj_period"] = _read_int_pref(prefs, ["kdj_period", "kdjPeriod"], defaults["kdj_period"])
+  defaults["kdj_k_smooth"] = _read_int_pref(prefs, ["kdj_k_smooth", "kdjKSmooth"], defaults["kdj_k_smooth"])
+  defaults["kdj_d_smooth"] = _read_int_pref(prefs, ["kdj_d_smooth", "kdjDSmooth"], defaults["kdj_d_smooth"])
   return defaults
 
 
@@ -277,6 +321,10 @@ def _indicator_handler_ma(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntim
 def _indicator_handler_close(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
   tf = str(ind.get("tf") or "").strip().lower()
   symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  if tf == "4h":
+    ctx.indicator_tf_series[ind_id] = {"tf": "4h", "series": {"value": list(ctx.four_h_closes)}}
+  elif tf == "1d":
+    ctx.indicator_tf_series[ind_id] = {"tf": "1d", "series": {"value": list(ctx.daily_series(symbol_ref))}}
   for i, row in enumerate(ctx.session_rows):
     val: float | None = None
     if tf == "1m":
@@ -298,13 +346,38 @@ def _indicator_handler_rsi(ind: dict[str, Any], ind_id: str, ctx: IndicatorRunti
     return
   params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
   symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
-  period = _read_int_pref(params, ["period", "window"], 14)
+  period = _read_int_pref(params, ["period", "window"], ctx.indicator_defaults["rsi_period"])
   rsi_series = _rsi(ctx.daily_series(symbol_ref), period)
+  numeric_series = [float(v) if v is not None else None for v in rsi_series]
+  ctx.indicator_tf_series[ind_id] = {"tf": "1d", "series": {"value": numeric_series}}
   for i, idx1d in enumerate(ctx.idx1d_by_session):
     value = None
     if idx1d is not None and 0 <= idx1d < len(rsi_series):
       value = rsi_series[idx1d]
     ctx.decision_indicator_values[i][ind_id] = {"value": float(value) if value is not None else None}
+
+
+def _indicator_handler_kdj(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf not in ("4h", "1d"):
+    return
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  period = _read_int_pref(params, ["period"], ctx.indicator_defaults["kdj_period"])
+  k_smooth = _read_int_pref(params, ["fast"], ctx.indicator_defaults["kdj_k_smooth"])
+  d_smooth = _read_int_pref(params, ["slow"], ctx.indicator_defaults["kdj_d_smooth"])
+  src = ctx.four_h_closes if tf == "4h" else ctx.daily_series(symbol_ref)
+  k_values, d_values, j_values = _kdj(src, period, k_smooth, d_smooth)
+  ctx.indicator_tf_series[ind_id] = {"tf": tf, "series": {"k": k_values, "d": d_values, "j": j_values, "value": j_values}}
+  idx_by_session = ctx.idx4h_by_session if tf == "4h" else ctx.idx1d_by_session
+  for i, idx_tf in enumerate(idx_by_session):
+    values = {"k": None, "d": None, "j": None, "value": None}
+    if idx_tf is not None and idx_tf < len(j_values):
+      values["k"] = float(k_values[idx_tf])
+      values["d"] = float(d_values[idx_tf])
+      values["j"] = float(j_values[idx_tf])
+      values["value"] = float(j_values[idx_tf])
+    ctx.decision_indicator_values[i][ind_id] = values
 
 
 INDICATOR_HANDLERS: dict[str, Callable[[dict[str, Any], str, IndicatorRuntimeContext], None]] = {
@@ -313,6 +386,7 @@ INDICATOR_HANDLERS: dict[str, Callable[[dict[str, Any], str, IndicatorRuntimeCon
   "MA": _indicator_handler_ma,
   "CLOSE": _indicator_handler_close,
   "RSI": _indicator_handler_rsi,
+  "KDJ": _indicator_handler_kdj,
 }
 
 
@@ -392,11 +466,109 @@ def _event_handler_threshold(ev: dict[str, Any], ctx: EventRuntimeContext) -> li
   return hits
 
 
+def _find_pivot_indices(
+  values: list[float | None],
+  *,
+  end_idx: int,
+  lookback: int,
+  left: int,
+  right: int,
+  kind: str,
+) -> list[int]:
+  start = max(left, end_idx - lookback + 1)
+  out: list[int] = []
+  max_i = min(end_idx - right, len(values) - right - 1)
+  if max_i < start:
+    return out
+  for i in range(start, max_i + 1):
+    center = values[i]
+    if center is None:
+      continue
+    ok = True
+    for j in range(1, left + 1):
+      lv = values[i - j]
+      if lv is None:
+        ok = False
+        break
+      if kind == "high" and not (center > lv):
+        ok = False
+        break
+      if kind == "low" and not (center < lv):
+        ok = False
+        break
+    if not ok:
+      continue
+    for j in range(1, right + 1):
+      rv = values[i + j]
+      if rv is None:
+        ok = False
+        break
+      if kind == "high" and not (center >= rv):
+        ok = False
+        break
+      if kind == "low" and not (center <= rv):
+        ok = False
+        break
+    if ok:
+      out.append(i)
+  return out
+
+
+def _event_handler_divergence(ev: dict[str, Any], ctx: EventRuntimeContext) -> list[bool]:
+  hits = [False] * len(ctx.session_rows)
+  event_type = str(ev.get("type") or "").strip().upper()
+  bearish = event_type == "DIVERGENCE_BEARISH"
+  bullish = event_type == "DIVERGENCE_BULLISH"
+  if not bearish and not bullish:
+    return hits
+
+  price_ref = _read_ref(ev.get("a")) or _read_ref(ev.get("left")) or ""
+  osc_ref = _read_ref(ev.get("b")) or _read_ref(ev.get("right")) or ""
+  price_id, price_field = _normalize_ref(price_ref)
+  osc_id, osc_field = _normalize_ref(osc_ref)
+  price_meta = ctx.indicator_tf_series.get(price_id) or {}
+  osc_meta = ctx.indicator_tf_series.get(osc_id) or {}
+  price_series = ((price_meta.get("series") or {}) if isinstance(price_meta, dict) else {}).get(price_field)
+  osc_series = ((osc_meta.get("series") or {}) if isinstance(osc_meta, dict) else {}).get(osc_field)
+  tf = str(ev.get("tf") or "").strip().lower() or str(price_meta.get("tf") or osc_meta.get("tf") or "").lower()
+  idx_by_session = ctx.idx4h_by_session if tf == "4h" else ctx.idx1d_by_session if tf == "1d" else None
+  if not isinstance(price_series, list) or not isinstance(osc_series, list) or not isinstance(idx_by_session, list):
+    return hits
+
+  left = max(1, int(_safe_float(ev.get("pivot_left")) or 3))
+  right = max(1, int(_safe_float(ev.get("pivot_right")) or 3))
+  lookback = max(10, int(_safe_float(ev.get("lookback_bars")) or 60))
+  pivot_kind = "high" if bearish else "low"
+
+  for i, idx_tf in enumerate(idx_by_session):
+    if idx_tf is None:
+      continue
+    price_pivots = _find_pivot_indices(price_series, end_idx=idx_tf, lookback=lookback, left=left, right=right, kind=pivot_kind)
+    osc_pivots = _find_pivot_indices(osc_series, end_idx=idx_tf, lookback=lookback, left=left, right=right, kind=pivot_kind)
+    if len(price_pivots) < 2 or len(osc_pivots) < 2:
+      continue
+
+    p1, p2 = price_pivots[-2], price_pivots[-1]
+    o1, o2 = osc_pivots[-2], osc_pivots[-1]
+    p1v, p2v = _safe_float(price_series[p1]), _safe_float(price_series[p2])
+    o1v, o2v = _safe_float(osc_series[o1]), _safe_float(osc_series[o2])
+    if p1v is None or p2v is None or o1v is None or o2v is None:
+      continue
+
+    if bearish and p2v > p1v and o2v < o1v:
+      hits[i] = True
+    if bullish and p2v < p1v and o2v > o1v:
+      hits[i] = True
+  return hits
+
+
 EVENT_HANDLERS: dict[str, Callable[[dict[str, Any], EventRuntimeContext], list[bool]]] = {
   "CROSS": _event_handler_cross,
   "CROSS_DOWN": _event_handler_cross,
   "CROSS_UP": _event_handler_cross,
   "THRESHOLD": _event_handler_threshold,
+  "DIVERGENCE_BEARISH": _event_handler_divergence,
+  "DIVERGENCE_BULLISH": _event_handler_divergence,
 }
 
 
