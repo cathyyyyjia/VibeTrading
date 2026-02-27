@@ -23,6 +23,11 @@ async function parseApiErrorMessage(res: Response, fallback: string): Promise<st
     if (body && typeof body === "object") {
       const code = typeof (body as any).code === "string" ? (body as any).code : "";
       const message = typeof (body as any).message === "string" ? (body as any).message : "";
+      if (code === "CONFIG_ERROR") {
+        const hint = "Check backend LLM_API_KEY/OPENAI_API_KEY and retry.";
+        if (message) return `${message} ${hint}`;
+        return `${code}: ${hint}`;
+      }
       if (code && message) return `${code}: ${message}`;
       if (message) return message;
       if (code) return code;
@@ -252,6 +257,7 @@ function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string
   if (stepId === "parse" && entry.msg === "StrategySpec ready" && kv) {
     const attemptsRaw = typeof kv.llm_attempts === "number" ? kv.llm_attempts : 1;
     const attempts = Math.max(1, Math.floor(attemptsRaw));
+    const llmUsed = typeof kv.llm_used === "boolean" ? kv.llm_used : true;
     const model =
       typeof kv.model === "string"
         ? kv.model
@@ -259,7 +265,8 @@ function formatStepLog(stepId: V0WorkspaceStep["id"], entry: V0LogEntry): string
           ? kv.llm_model
           : undefined;
     const modelPrefix = model ? `LLM: ${model}, ` : "";
-    return `[${entry.level}] Strategy ready (${modelPrefix}attempts: ${attempts})`;
+    const modeSuffix = llmUsed ? "" : ", fallback mode";
+    return `[${entry.level}] Strategy ready (${modelPrefix}attempts: ${attempts}${modeSuffix})`;
   }
   if (stepId === "data" && entry.msg === "Data ready" && kv) {
     const start = typeof kv.start_date === "string" ? kv.start_date : "";

@@ -332,3 +332,21 @@ async def test_indicator_kinds_are_injected_into_dsl(monkeypatch: pytest.MonkeyP
   assert "pref_rsi_1d" in ids
   assert "pref_kdj_4h" in ids
   assert "pref_bias_1d" in ids
+
+
+@pytest.mark.asyncio
+async def test_complex_prompt_raises_config_error_when_llm_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fail_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    raise AppError("INTERNAL", "LLM request failed", {"status": 502}, http_status=502)
+
+  monkeypatch.setattr(llm_client, "chat_json", _fail_chat_json)
+  with pytest.raises(AppError) as exc:
+    await nl_to_strategy_spec(
+      "观察QQQ，周线KDJ金叉建仓20%，随后再加仓40%",
+      "BACKTEST_ONLY",
+      indicator_preferences={
+        "indicatorKinds": ["KDJ", "MA"],
+        "kdjPeriod": 9,
+      },
+    )
+  assert exc.value.code == "CONFIG_ERROR"

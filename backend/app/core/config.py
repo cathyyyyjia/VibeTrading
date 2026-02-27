@@ -30,7 +30,7 @@ class Settings(BaseSettings):
   supabase_storage_signed_url_ttl_seconds: int = 3600
 
   llm_base_url: AnyHttpUrl = "https://api.openai.com/v1"
-  llm_api_key: str | None = None
+  llm_api_key: str | None = Field(default=None, validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"))
   llm_model: str = "gpt-5-mini"
   llm_request_timeout_seconds: int = 120
   llm_max_retries: int = 2

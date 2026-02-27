@@ -550,6 +550,36 @@ def _extract_primary_symbol(nl_text: str) -> str:
   return "QQQ"
 
 
+def _requires_precise_llm_parsing(nl_text: str, indicator_preferences: dict[str, Any] | None) -> bool:
+  text = (nl_text or "").lower()
+  risk_tokens = [
+    "kdj",
+    "rsi",
+    "boll",
+    "bias",
+    "背离",
+    "divergence",
+    "周线",
+    "weekly",
+    "月线",
+    "monthly",
+    "加仓",
+    "减仓",
+    "分批",
+    "stage",
+    "then",
+    "随后",
+    "然后",
+  ]
+  if any(tok in text for tok in risk_tokens):
+    return True
+  if re.search(r"\d+\s*%", text):
+    return True
+  kinds = _normalized_indicator_kinds(indicator_preferences)
+  # More than MA/MACD usually means users expect richer semantics than fallback can safely represent.
+  return any(k in {"BOLL", "RSI", "KDJ", "BIAS"} for k in kinds)
+
+
 def _build_fallback_strategy_spec(
   *,
   nl_text: str,
@@ -1135,6 +1165,13 @@ Output requirements:
         break
 
   if last_error is not None:
+    if _requires_precise_llm_parsing(nl_text, indicator_preferences):
+      raise AppError(
+        "CONFIG_ERROR",
+        "Complex strategy requires LLM parsing, but LLM is unavailable or request failed",
+        {"reason": last_error.message, "code": last_error.code},
+        http_status=400,
+      )
     fallback = _build_fallback_strategy_spec(
       nl_text=nl_text,
       mode=mode,
