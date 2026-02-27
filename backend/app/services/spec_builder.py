@@ -586,6 +586,7 @@ def _build_fallback_strategy_spec(
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
   indicator_preferences: dict[str, Any] | None,
   reason: AppError | None,
+  complex_guard_triggered: bool = False,
 ) -> dict[str, Any]:
   signal_symbol = _extract_primary_symbol(nl_text)
   trade_symbol = signal_symbol
@@ -699,6 +700,7 @@ def _build_fallback_strategy_spec(
       "generation_mode": "fallback",
       "fallback_reason_code": reason.code if isinstance(reason, AppError) else None,
       "fallback_reason_message": reason.message if isinstance(reason, AppError) else "unknown",
+      "fallback_guard_triggered": complex_guard_triggered,
     },
     "strategy_version": "v0",
   }
@@ -1165,19 +1167,20 @@ Output requirements:
         break
 
   if last_error is not None:
-    if _requires_precise_llm_parsing(nl_text, indicator_preferences):
-      raise AppError(
-        "CONFIG_ERROR",
-        "Complex strategy requires LLM parsing, but LLM is unavailable or request failed",
-        {"reason": last_error.message, "code": last_error.code},
-        http_status=400,
-      )
+    guard_triggered = _requires_precise_llm_parsing(nl_text, indicator_preferences)
     fallback = _build_fallback_strategy_spec(
       nl_text=nl_text,
       mode=mode,
       indicator_preferences=indicator_preferences,
       reason=last_error,
+      complex_guard_triggered=guard_triggered,
     )
+    if guard_triggered:
+      meta = fallback.get("meta")
+      if isinstance(meta, dict):
+        meta["fallback_reason_message"] = (
+          f"{last_error.message}; complex prompt fell back to simplified strategy (review DSL before using)"
+        )
     if overrides and isinstance(overrides, dict):
       fallback = _deep_merge(fallback, overrides)
     _apply_indicator_preferences(fallback, indicator_preferences)
