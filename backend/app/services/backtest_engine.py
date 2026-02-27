@@ -198,12 +198,15 @@ def _read_int_pref(source: dict[str, Any], keys: list[str], default: int) -> int
   return default
 
 
-def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, int]:
+def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, float | int]:
   defaults = {
     "ma_window_days": 5,
     "macd_fast": 12,
     "macd_slow": 26,
     "macd_signal": 9,
+    "boll_period": 20,
+    "boll_stddev_mult": 2.0,
+    "bias_period": 6,
     "rsi_period": 14,
     "kdj_period": 9,
     "kdj_k_smooth": 3,
@@ -227,6 +230,13 @@ def _extract_indicator_defaults(strategy_spec: dict[str, Any]) -> dict[str, int]
   defaults["macd_slow"] = _read_int_pref(prefs, ["macd_slow", "macdSlow"], defaults["macd_slow"])
   defaults["macd_signal"] = _read_int_pref(prefs, ["macd_signal", "macdSignal"], defaults["macd_signal"])
   defaults["rsi_period"] = _read_int_pref(prefs, ["rsi_period", "rsiPeriod"], defaults["rsi_period"])
+  defaults["boll_period"] = _read_int_pref(prefs, ["boll_period", "bollPeriod"], int(defaults["boll_period"]))
+  try:
+    raw_boll_std = prefs.get("boll_stddev_mult", prefs.get("bollStddevMult", defaults["boll_stddev_mult"]))
+    defaults["boll_stddev_mult"] = max(0.1, float(raw_boll_std))
+  except Exception:
+    pass
+  defaults["bias_period"] = _read_int_pref(prefs, ["bias_period", "biasPeriod"], defaults["bias_period"])
 
   kdj = prefs.get("kdj")
   if isinstance(kdj, dict):
@@ -269,7 +279,7 @@ class IndicatorRuntimeContext:
   trade_symbol: str
   symbol_refs: dict[str, str]
   constants: dict[str, Any]
-  indicator_defaults: dict[str, int]
+  indicator_defaults: dict[str, float | int]
   decision_indicator_values: list[dict[str, dict[str, float | None]]]
   indicator_tf_series: dict[str, dict[str, Any]]
 
@@ -357,6 +367,72 @@ def _indicator_handler_rsi(ind: dict[str, Any], ind_id: str, ctx: IndicatorRunti
     ctx.decision_indicator_values[i][ind_id] = {"value": float(value) if value is not None else None}
 
 
+def _indicator_handler_boll(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf not in ("4h", "1d"):
+    return
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  period = _read_int_pref(params, ["period"], int(ctx.indicator_defaults["boll_period"]))
+  std_mult = _safe_float((params or {}).get("stddev_mult"))
+  if std_mult is None:
+    std_mult = _safe_float((params or {}).get("signal"))
+  if std_mult is None:
+    std_mult = float(ctx.indicator_defaults["boll_stddev_mult"])
+  std_mult = max(0.1, float(std_mult))
+  src = ctx.four_h_closes if tf == "4h" else ctx.daily_series(symbol_ref)
+  upper: list[float | None] = [None] * len(src)
+  mid: list[float | None] = [None] * len(src)
+  lower: list[float | None] = [None] * len(src)
+  n = max(1, int(period))
+  for i in range(len(src)):
+    if i + 1 < n:
+      continue
+    window = src[i - n + 1 : i + 1]
+    mean = float(np.mean(window))
+    std = float(np.std(window))
+    mid[i] = mean
+    upper[i] = mean + std_mult * std
+    lower[i] = mean - std_mult * std
+  ctx.indicator_tf_series[ind_id] = {"tf": tf, "series": {"upper": upper, "mid": mid, "lower": lower, "value": mid}}
+  idx_by_session = ctx.idx4h_by_session if tf == "4h" else ctx.idx1d_by_session
+  for i, idx_tf in enumerate(idx_by_session):
+    values = {"upper": None, "mid": None, "lower": None, "value": None}
+    if idx_tf is not None and 0 <= idx_tf < len(src):
+      values["upper"] = float(upper[idx_tf]) if upper[idx_tf] is not None else None
+      values["mid"] = float(mid[idx_tf]) if mid[idx_tf] is not None else None
+      values["lower"] = float(lower[idx_tf]) if lower[idx_tf] is not None else None
+      values["value"] = values["mid"]
+    ctx.decision_indicator_values[i][ind_id] = values
+
+
+def _indicator_handler_bias(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
+  tf = str(ind.get("tf") or "").strip().lower()
+  if tf not in ("4h", "1d"):
+    return
+  params = ind.get("params") if isinstance(ind.get("params"), dict) else {}
+  symbol_ref = str(ind.get("symbol_ref") or "signal").strip()
+  period = _read_int_pref(params, ["period"], int(ctx.indicator_defaults["bias_period"]))
+  src = ctx.four_h_closes if tf == "4h" else ctx.daily_series(symbol_ref)
+  n = max(1, int(period))
+  bias_series: list[float | None] = [None] * len(src)
+  for i in range(len(src)):
+    if i + 1 < n:
+      continue
+    ma = float(np.mean(src[i - n + 1 : i + 1]))
+    if abs(ma) <= 1e-12:
+      bias_series[i] = 0.0
+    else:
+      bias_series[i] = (float(src[i]) - ma) / ma * 100.0
+  ctx.indicator_tf_series[ind_id] = {"tf": tf, "series": {"value": bias_series}}
+  idx_by_session = ctx.idx4h_by_session if tf == "4h" else ctx.idx1d_by_session
+  for i, idx_tf in enumerate(idx_by_session):
+    value = None
+    if idx_tf is not None and 0 <= idx_tf < len(bias_series):
+      value = bias_series[idx_tf]
+    ctx.decision_indicator_values[i][ind_id] = {"value": float(value) if value is not None else None}
+
+
 def _indicator_handler_kdj(ind: dict[str, Any], ind_id: str, ctx: IndicatorRuntimeContext) -> None:
   tf = str(ind.get("tf") or "").strip().lower()
   if tf not in ("4h", "1d"):
@@ -387,6 +463,8 @@ INDICATOR_HANDLERS: dict[str, Callable[[dict[str, Any], str, IndicatorRuntimeCon
   "CLOSE": _indicator_handler_close,
   "RSI": _indicator_handler_rsi,
   "KDJ": _indicator_handler_kdj,
+  "BOLL": _indicator_handler_boll,
+  "BIAS": _indicator_handler_bias,
 }
 
 

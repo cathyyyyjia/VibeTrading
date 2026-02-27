@@ -297,3 +297,38 @@ async def test_llm_failure_falls_back_to_local_spec(monkeypatch: pytest.MonkeyPa
 
   events = ((((spec.get("dsl") or {}).get("signal")) or {}).get("events") or [])
   assert any(isinstance(e, dict) and e.get("id") == "ev_divergence_signal" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_indicator_kinds_are_injected_into_dsl(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fake_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _draft_single_partial()
+
+  monkeypatch.setattr(llm_client, "chat_json", _fake_chat_json)
+  spec = await nl_to_strategy_spec(
+    PROMPT,
+    "BACKTEST_ONLY",
+    indicator_preferences={
+      "indicatorKinds": ["MA", "MACD", "BOLL", "RSI", "KDJ", "BIAS"],
+      "maWindowDays": 10,
+      "macdFast": 8,
+      "macdSlow": 17,
+      "macdSignal": 5,
+      "bollPeriod": 20,
+      "bollStddevMult": 2.2,
+      "rsiPeriod": 14,
+      "kdjPeriod": 9,
+      "kdjKSmooth": 3,
+      "kdjDSmooth": 3,
+      "biasPeriod": 6,
+    },
+  )
+
+  indicators = ((((spec.get("dsl") or {}).get("signal")) or {}).get("indicators") or [])
+  ids = {str(ind.get("id")) for ind in indicators if isinstance(ind, dict)}
+  assert "pref_ma_1d" in ids
+  assert "pref_macd_4h" in ids
+  assert "pref_boll_1d" in ids
+  assert "pref_rsi_1d" in ids
+  assert "pref_kdj_4h" in ids
+  assert "pref_bias_1d" in ids

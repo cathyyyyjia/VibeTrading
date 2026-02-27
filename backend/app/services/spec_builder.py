@@ -163,7 +163,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                 "required": ["id", "type", "tf", "symbol_ref", "align", "params"],
                 "properties": {
                   "id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
-                  "type": {"type": "string", "enum": ["MACD", "MA", "SMA", "CLOSE", "RSI", "KDJ"]},
+                  "type": {"type": "string", "enum": ["MACD", "MA", "SMA", "CLOSE", "RSI", "KDJ", "BOLL", "BIAS"]},
                   "tf": {"type": "string", "enum": ["1m", "4h", "1d"]},
                   "symbol_ref": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
                   "align": {"type": ["string", "null"], "enum": ["LAST_CLOSED", "CARRY_FORWARD", None]},
@@ -178,6 +178,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                       "period": {"type": ["integer", "null"]},
                       "window": {"type": ["string", "null"]},
                       "bar_selection": {"type": ["string", "null"]},
+                      "stddev_mult": {"type": ["number", "null"]},
                     },
                   },
                 },
@@ -467,8 +468,11 @@ def _assemble_final_strategy_spec(
 
 def _build_indicator_preferences_context(indicator_preferences: dict[str, Any] | None) -> str:
   defaults = {
+    "indicatorKinds": ["MA", "MACD"],
     "ma_window_days": 5,
     "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "boll": {"period": 20, "stddev_mult": 2.0},
+    "bias": {"period": 6},
     "rsi": {"period": 14},
     "kdj": {"period": 9, "k_smooth": 3, "d_smooth": 3},
     "divergence": {
@@ -505,6 +509,34 @@ def _read_int_pref(pref: dict[str, Any], keys: list[str], default: int, *, min_v
       except Exception:
         continue
   return default
+
+
+def _read_float_pref(pref: dict[str, Any], keys: list[str], default: float, *, min_value: float = 0.0) -> float:
+  for key in keys:
+    raw = pref.get(key)
+    if isinstance(raw, (int, float)):
+      return max(min_value, float(raw))
+    if isinstance(raw, str):
+      try:
+        return max(min_value, float(raw.strip()))
+      except Exception:
+        continue
+  return default
+
+
+def _normalized_indicator_kinds(indicator_preferences: dict[str, Any] | None) -> list[str]:
+  if not isinstance(indicator_preferences, dict):
+    return ["MA", "MACD"]
+  raw = indicator_preferences.get("indicatorKinds")
+  if not isinstance(raw, list):
+    return ["MA", "MACD"]
+  allowed = {"MA", "MACD", "BOLL", "RSI", "KDJ", "BIAS"}
+  out: list[str] = []
+  for item in raw:
+    text = str(item or "").strip().upper()
+    if text in allowed and text not in out:
+      out.append(text)
+  return out or ["MA", "MACD"]
 
 
 def _extract_primary_symbol(nl_text: str) -> str:
@@ -565,6 +597,7 @@ def _build_fallback_strategy_spec(
               "period": None,
               "window": None,
               "bar_selection": None,
+              "stddev_mult": None,
             },
           }
         ],
@@ -646,6 +679,171 @@ def _build_fallback_strategy_spec(
   return spec
 
 
+def _apply_indicator_preferences(spec: dict[str, Any], indicator_preferences: dict[str, Any] | None) -> None:
+  if not isinstance(indicator_preferences, dict):
+    return
+  dsl = spec.get("dsl")
+  if not isinstance(dsl, dict):
+    return
+  signal_layer = dsl.get("signal")
+  if not isinstance(signal_layer, dict):
+    return
+  indicators = signal_layer.get("indicators")
+  if not isinstance(indicators, list):
+    return
+
+  kinds = _normalized_indicator_kinds(indicator_preferences)
+
+  def _upsert_indicator(indicator: dict[str, Any]) -> None:
+    ind_id = str(indicator.get("id") or "")
+    if not ind_id:
+      return
+    for idx, existing in enumerate(indicators):
+      if isinstance(existing, dict) and str(existing.get("id") or "") == ind_id:
+        indicators[idx] = indicator
+        return
+    indicators.append(indicator)
+
+  def _remove_indicator(ind_id: str) -> None:
+    signal_layer["indicators"] = [
+      ind for ind in indicators
+      if not (isinstance(ind, dict) and str(ind.get("id") or "") == ind_id)
+    ]
+
+  if "MA" in kinds:
+    ma_window = _read_int_pref(indicator_preferences, ["maWindowDays", "ma_window_days"], 5)
+    _upsert_indicator(
+      {
+        "id": "pref_ma_1d",
+        "type": "MA",
+        "tf": "1d",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": None,
+          "slow": None,
+          "signal": None,
+          "period": None,
+          "window": f"{ma_window}d",
+          "bar_selection": "LAST_CLOSED_1D",
+          "stddev_mult": None,
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_ma_1d")
+
+  if "MACD" in kinds:
+    _upsert_indicator(
+      {
+        "id": "pref_macd_4h",
+        "type": "MACD",
+        "tf": "4h",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": _read_int_pref(indicator_preferences, ["macdFast", "macd_fast"], 12),
+          "slow": _read_int_pref(indicator_preferences, ["macdSlow", "macd_slow"], 26),
+          "signal": _read_int_pref(indicator_preferences, ["macdSignal", "macd_signal"], 9),
+          "period": None,
+          "window": None,
+          "bar_selection": None,
+          "stddev_mult": None,
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_macd_4h")
+
+  if "RSI" in kinds:
+    _upsert_indicator(
+      {
+        "id": "pref_rsi_1d",
+        "type": "RSI",
+        "tf": "1d",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": None,
+          "slow": None,
+          "signal": None,
+          "period": _read_int_pref(indicator_preferences, ["rsiPeriod", "rsi_period"], 14),
+          "window": None,
+          "bar_selection": "LAST_CLOSED_1D",
+          "stddev_mult": None,
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_rsi_1d")
+
+  if "KDJ" in kinds:
+    _upsert_indicator(
+      {
+        "id": "pref_kdj_4h",
+        "type": "KDJ",
+        "tf": "4h",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": _read_int_pref(indicator_preferences, ["kdjKSmooth", "kdj_k_smooth"], 3),
+          "slow": _read_int_pref(indicator_preferences, ["kdjDSmooth", "kdj_d_smooth"], 3),
+          "signal": None,
+          "period": _read_int_pref(indicator_preferences, ["kdjPeriod", "kdj_period"], 9),
+          "window": None,
+          "bar_selection": None,
+          "stddev_mult": None,
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_kdj_4h")
+
+  if "BOLL" in kinds:
+    _upsert_indicator(
+      {
+        "id": "pref_boll_1d",
+        "type": "BOLL",
+        "tf": "1d",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": None,
+          "slow": None,
+          "signal": None,
+          "period": _read_int_pref(indicator_preferences, ["bollPeriod", "boll_period"], 20),
+          "window": None,
+          "bar_selection": "LAST_CLOSED_1D",
+          "stddev_mult": _read_float_pref(indicator_preferences, ["bollStddevMult", "boll_stddev_mult"], 2.0, min_value=0.1),
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_boll_1d")
+
+  if "BIAS" in kinds:
+    _upsert_indicator(
+      {
+        "id": "pref_bias_1d",
+        "type": "BIAS",
+        "tf": "1d",
+        "symbol_ref": "signal",
+        "align": "LAST_CLOSED",
+        "params": {
+          "fast": None,
+          "slow": None,
+          "signal": None,
+          "period": _read_int_pref(indicator_preferences, ["biasPeriod", "bias_period"], 6),
+          "window": None,
+          "bar_selection": "LAST_CLOSED_1D",
+          "stddev_mult": None,
+        },
+      }
+    )
+  else:
+    _remove_indicator("pref_bias_1d")
+
+
 def _apply_divergence_preferences(spec: dict[str, Any], indicator_preferences: dict[str, Any] | None) -> None:
   if not isinstance(indicator_preferences, dict):
     return
@@ -690,7 +888,7 @@ def _apply_divergence_preferences(spec: dict[str, Any], indicator_preferences: d
     for ind in indicators
   )
   if not has_src:
-    params: dict[str, Any] = {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None}
+    params: dict[str, Any] = {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None, "stddev_mult": None}
     if indicator_name == "MACD":
       params["fast"] = _read_int_pref(indicator_preferences, ["macdFast", "macd_fast"], 12)
       params["slow"] = _read_int_pref(indicator_preferences, ["macdSlow", "macd_slow"], 26)
@@ -724,7 +922,7 @@ def _apply_divergence_preferences(spec: dict[str, Any], indicator_preferences: d
         "tf": tf,
         "symbol_ref": "signal",
         "align": "LAST_CLOSED",
-        "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None},
+        "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": None, "stddev_mult": None},
       }
     )
 
@@ -918,6 +1116,7 @@ Output requirements:
       spec = _assemble_final_strategy_spec(draft=draft, nl_text=nl_text, mode=mode)
       if overrides and isinstance(overrides, dict):
         spec = _deep_merge(spec, overrides)
+      _apply_indicator_preferences(spec, indicator_preferences)
       _normalize_cross_event_window_semantics(spec)
       _apply_divergence_preferences(spec, indicator_preferences)
       spec["strategy_version"] = "v0"
@@ -944,6 +1143,7 @@ Output requirements:
     )
     if overrides and isinstance(overrides, dict):
       fallback = _deep_merge(fallback, overrides)
+    _apply_indicator_preferences(fallback, indicator_preferences)
     _normalize_cross_event_window_semantics(fallback)
     _apply_divergence_preferences(fallback, indicator_preferences)
     return fallback

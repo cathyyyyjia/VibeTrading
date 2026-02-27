@@ -47,10 +47,14 @@ const POLL_INTERVAL_MAX = 20000;
 const POLL_INTERVAL_REALTIME_HEARTBEAT = 30000;
 const RUN_REALTIME_ENABLED = ((import.meta as any).env?.VITE_RUN_REALTIME_ENABLED ?? "true") !== "false";
 const DEFAULT_INDICATOR_PREFERENCES: api.IndicatorPreferences = {
+  indicatorKinds: ["MA", "MACD"],
   maWindowDays: 5,
   macdFast: 12,
   macdSlow: 26,
   macdSignal: 9,
+  bollPeriod: 20,
+  bollStddevMult: 2,
+  biasPeriod: 6,
   rsiPeriod: 14,
   kdjPeriod: 9,
   kdjKSmooth: 3,

@@ -101,6 +101,15 @@ export default function StrategyInput({
     pivotRight: 3,
     lookbackBars: 60,
   };
+  const indicatorKinds = (indicatorPreferences.indicatorKinds ?? ['MA', 'MACD']) as Array<'MA' | 'MACD' | 'BOLL' | 'RSI' | 'KDJ' | 'BIAS'>;
+  const indicatorKindOptions: Array<{ value: 'MA' | 'MACD' | 'BOLL' | 'RSI' | 'KDJ' | 'BIAS'; label: string }> = [
+    { value: 'MA', label: 'MA' },
+    { value: 'MACD', label: 'MACD' },
+    { value: 'BOLL', label: locale === 'zh' ? '布林带' : 'Bollinger' },
+    { value: 'RSI', label: 'RSI' },
+    { value: 'KDJ', label: 'KDJ' },
+    { value: 'BIAS', label: locale === 'zh' ? '乖离率' : 'BIAS' },
+  ];
 
   const updateIndicatorPreference = (partial: Partial<IndicatorPreferences>) => {
     onIndicatorPreferencesChange({ ...indicatorPreferences, ...partial });
@@ -116,6 +125,41 @@ export default function StrategyInput({
     const n = Number(value);
     if (Number.isNaN(n)) return;
     updateIndicatorPreference({ maWindowDays: Math.max(1, Math.floor(n)) });
+  };
+  const handleIndicatorKindToggle = (kind: 'MA' | 'MACD' | 'BOLL' | 'RSI' | 'KDJ' | 'BIAS') => {
+    const exists = indicatorKinds.includes(kind);
+    const next = exists ? indicatorKinds.filter((k) => k !== kind) : [...indicatorKinds, kind];
+    updateIndicatorPreference({ indicatorKinds: next.length > 0 ? next : ['MA'] });
+  };
+  const handleRsiInputChange = (value: string) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) return;
+    updateIndicatorPreference({ rsiPeriod: Math.max(1, Math.floor(n)) });
+  };
+  const handleKdjInputChange = (
+    key: keyof Pick<IndicatorPreferences, 'kdjPeriod' | 'kdjKSmooth' | 'kdjDSmooth'>,
+    value: string
+  ) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) return;
+    updateIndicatorPreference({ [key]: Math.max(1, Math.floor(n)) } as Partial<IndicatorPreferences>);
+  };
+  const handleBollInputChange = (
+    key: keyof Pick<IndicatorPreferences, 'bollPeriod' | 'bollStddevMult'>,
+    value: string
+  ) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) return;
+    if (key === 'bollStddevMult') {
+      updateIndicatorPreference({ bollStddevMult: Math.max(0.1, Number(n.toFixed(2))) });
+      return;
+    }
+    updateIndicatorPreference({ bollPeriod: Math.max(1, Math.floor(n)) });
+  };
+  const handleBiasInputChange = (value: string) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) return;
+    updateIndicatorPreference({ biasPeriod: Math.max(1, Math.floor(n)) });
   };
   const updateDivergencePreference = (
     partial: Partial<NonNullable<IndicatorPreferences['divergence']>>
@@ -224,6 +268,26 @@ export default function StrategyInput({
 
               <TabsContent value="indicators" className="space-y-3 mt-2">
                 <div className="space-y-2">
+                  <p className="text-[11px] font-medium text-muted-foreground">{locale === 'zh' ? '技术指标种类' : 'Indicator Kinds'}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {indicatorKindOptions.map((opt) => (
+                      <Button
+                        key={opt.value}
+                        type="button"
+                        size="sm"
+                        variant={indicatorKinds.includes(opt.value) ? 'default' : 'outline'}
+                        disabled={isRunning}
+                        onClick={() => handleIndicatorKindToggle(opt.value)}
+                        className="h-7 text-xs"
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {indicatorKinds.includes('MA') && (
+                <div className="space-y-2">
                   <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.maWindow')}</p>
                   <div className="flex flex-wrap items-center gap-2">
                     {maPresets.map((window) => (
@@ -267,7 +331,9 @@ export default function StrategyInput({
                     )}
                   </div>
                 </div>
+                )}
 
+                {indicatorKinds.includes('MACD') && (
                 <div className="space-y-2">
                   <p className="text-[11px] font-medium text-muted-foreground">{t('strategy.macdParams')}</p>
                   <div className="flex flex-wrap items-center gap-2">
@@ -345,6 +411,97 @@ export default function StrategyInput({
                     )}
                   </div>
                 </div>
+                )}
+
+                {indicatorKinds.includes('BOLL') && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium text-muted-foreground">{locale === 'zh' ? '布林带参数（周期/倍数）' : 'Bollinger Params (Period/Multiplier)'}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.bollPeriod ?? 20}
+                        onChange={(e) => handleBollInputChange('bollPeriod', e.target.value)}
+                        className="w-28 h-7 text-xs"
+                        placeholder={locale === 'zh' ? '周期' : 'Period'}
+                      />
+                      <Input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.bollStddevMult ?? 2}
+                        onChange={(e) => handleBollInputChange('bollStddevMult', e.target.value)}
+                        className="w-32 h-7 text-xs"
+                        placeholder={locale === 'zh' ? '标准差倍数' : 'Std Mult'}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {indicatorKinds.includes('RSI') && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium text-muted-foreground">RSI {locale === 'zh' ? '周期' : 'Period'}</p>
+                    <Input
+                      type="number"
+                      min={1}
+                      disabled={isRunning}
+                      value={indicatorPreferences.rsiPeriod ?? 14}
+                      onChange={(e) => handleRsiInputChange(e.target.value)}
+                      className="w-28 h-7 text-xs"
+                    />
+                  </div>
+                )}
+
+                {indicatorKinds.includes('KDJ') && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium text-muted-foreground">KDJ {locale === 'zh' ? '参数（周期/K平滑/D平滑）' : 'Params (Period/K-smooth/D-smooth)'}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.kdjPeriod ?? 9}
+                        onChange={(e) => handleKdjInputChange('kdjPeriod', e.target.value)}
+                        className="w-24 h-7 text-xs"
+                        placeholder={locale === 'zh' ? '周期' : 'Period'}
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.kdjKSmooth ?? 3}
+                        onChange={(e) => handleKdjInputChange('kdjKSmooth', e.target.value)}
+                        className="w-28 h-7 text-xs"
+                        placeholder={locale === 'zh' ? 'K平滑' : 'K Smooth'}
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        disabled={isRunning}
+                        value={indicatorPreferences.kdjDSmooth ?? 3}
+                        onChange={(e) => handleKdjInputChange('kdjDSmooth', e.target.value)}
+                        className="w-28 h-7 text-xs"
+                        placeholder={locale === 'zh' ? 'D平滑' : 'D Smooth'}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {indicatorKinds.includes('BIAS') && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium text-muted-foreground">{locale === 'zh' ? '乖离率周期' : 'BIAS Period'}</p>
+                    <Input
+                      type="number"
+                      min={1}
+                      disabled={isRunning}
+                      value={indicatorPreferences.biasPeriod ?? 6}
+                      onChange={(e) => handleBiasInputChange(e.target.value)}
+                      className="w-28 h-7 text-xs"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-2 border border-border rounded-md p-3">
                   <p className="text-[11px] font-medium text-muted-foreground">

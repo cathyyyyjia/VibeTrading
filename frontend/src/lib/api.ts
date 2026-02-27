@@ -76,10 +76,14 @@ export interface CreateRunResponse {
 }
 
 export interface IndicatorPreferences {
+  indicatorKinds?: Array<"MA" | "MACD" | "BOLL" | "RSI" | "KDJ" | "BIAS">;
   maWindowDays: number;
   macdFast: number;
   macdSlow: number;
   macdSignal: number;
+  bollPeriod?: number;
+  bollStddevMult?: number;
+  biasPeriod?: number;
   rsiPeriod?: number;
   kdjPeriod?: number;
   kdjKSmooth?: number;
