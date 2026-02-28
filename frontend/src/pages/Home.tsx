@@ -68,6 +68,7 @@ export default function Home() {
               onBacktestDateRangeChange={setBacktestDateRange}
               report={report}
               runId={runId}
+              artifacts={artifacts}
               error={backtestError}
               onRetry={retry}
             />

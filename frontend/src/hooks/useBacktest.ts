@@ -152,6 +152,7 @@ export function useBacktest(): UseBacktestReturn {
         errorStreakRef.current = 0;
 
         setSteps(statusData.steps);
+        setArtifacts(statusData.artifacts);
         const runningStep = statusData.steps.find((s) => s.status === "running");
         let displayProgress = 0;
         if (runningStep?.key === "backtest") {
@@ -212,6 +213,7 @@ export function useBacktest(): UseBacktestReturn {
           }
         } else if (statusData.state === "failed") {
           setStatus("failed");
+          setArtifacts(statusData.artifacts);
           stopPolling();
           stopRealtime();
           shouldContinue = false;

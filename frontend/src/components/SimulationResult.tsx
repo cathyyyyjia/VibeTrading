@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // SimulationResult - Latest Simulation section
 // Design: Swiss Precision - green dot, simulation ID, KPI + chart + table
 // ============================================================
@@ -18,6 +18,7 @@ interface SimulationResultProps {
   report: RunReportResponse | null;
   status: AppStatus;
   runId: string | null;
+  artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
   indicatorPreferences: IndicatorPreferences;
   backtestStartDate: string;
   backtestEndDate: string;
@@ -29,6 +30,7 @@ export default function SimulationResult({
   report,
   status,
   runId,
+  artifacts,
   indicatorPreferences,
   backtestStartDate,
   backtestEndDate,
@@ -53,6 +55,14 @@ export default function SimulationResult({
     let cancelled = false;
     const loadDsl = async () => {
       if (!runId) return;
+      if (!artifacts?.dsl) {
+        if (status === "completed" || status === "failed") {
+          setDslError(locale === "zh" ? "DSL 暂不可用" : "DSL not available");
+        } else {
+          setDslError(null);
+        }
+        return;
+      }
       try {
         const res = await getRunArtifact(runId, "dsl.json");
         if (cancelled) return;
@@ -68,7 +78,7 @@ export default function SimulationResult({
     return () => {
       cancelled = true;
     };
-  }, [runId, locale]);
+  }, [runId, artifacts?.dsl, status, locale]);
 
   const getTradeKey = (trade: TradeRecord | null) => {
     if (!trade) return "";
@@ -304,3 +314,4 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+

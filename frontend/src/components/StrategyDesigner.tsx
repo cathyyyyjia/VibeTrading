@@ -28,6 +28,7 @@ interface StrategyDesignerProps {
   onBacktestDateRangeChange: (next: { startDate: string; endDate: string }) => void;
   report: RunReportResponse | null;
   runId: string | null;
+  artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
   error: string | null;
   onRetry: () => void;
 }
@@ -48,6 +49,7 @@ export default function StrategyDesigner({
   onBacktestDateRangeChange,
   report,
   runId,
+  artifacts,
   error,
   onRetry,
 }: StrategyDesignerProps) {
@@ -88,6 +90,7 @@ export default function StrategyDesigner({
         report={report}
         status={status}
         runId={runId}
+        artifacts={artifacts}
         indicatorPreferences={indicatorPreferences}
         backtestStartDate={backtestStartDate}
         backtestEndDate={backtestEndDate}
