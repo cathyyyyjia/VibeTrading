@@ -18,6 +18,7 @@ interface SimulationResultProps {
   report: RunReportResponse | null;
   status: AppStatus;
   runId: string | null;
+  prompt: string;
   artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
   indicatorPreferences: IndicatorPreferences;
   backtestStartDate: string;
@@ -30,6 +31,7 @@ export default function SimulationResult({
   report,
   status,
   runId,
+  prompt,
   artifacts,
   indicatorPreferences,
   backtestStartDate,
@@ -45,6 +47,11 @@ export default function SimulationResult({
   const [dslTab, setDslTab] = useState<"view" | "explain" | "edit">("view");
   const [dslError, setDslError] = useState<string | null>(null);
   const [strategyText, setStrategyText] = useState<string>("");
+  useEffect(() => {
+    if (!strategyText.trim() && prompt.trim()) {
+      setStrategyText(prompt);
+    }
+  }, [prompt, strategyText]);
   const [aiBusy, setAiBusy] = useState(false);
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
@@ -323,32 +330,126 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
   const events = spec.dsl?.signal?.events || [];
   const actions = spec.dsl?.action?.actions || [];
   const indicators = spec.dsl?.signal?.indicators || [];
-  const tfs = Array.from(new Set(indicators.map((i: any) => i?.tf).filter(Boolean)));
+
+  const eventById: Record<string, any> = {};
+  events.forEach((e: any) => { if (e?.id) eventById[e.id] = e; });
+
+  const indicatorTfs: Record<string, Set<string>> = {};
+  indicators.forEach((i: any) => {
+    const type = String(i?.type || "");
+    const tf = String(i?.tf || "");
+    if (!type || !tf) return;
+    if (!indicatorTfs[type]) indicatorTfs[type] = new Set();
+    indicatorTfs[type].add(tf);
+  });
+
+  const formatEvent = (id: string) => {
+    const e = eventById[id];
+    if (!e) return id;
+    if (e.type === "CROSS_UP") return `${e.id} (CROSS_UP ${e.a} > ${e.b}, ${e.tf})`;
+    if (e.type === "CROSS_DOWN") return `${e.id} (CROSS_DOWN ${e.a} < ${e.b}, ${e.tf})`;
+    if (e.type === "THRESHOLD") return `${e.id} (${e.left} ${e.op} ${e.right}, ${e.tf})`;
+    return `${e.id} (${e.type}, ${e.tf})`;
+  };
+
+  const entryRules: string[] = [];
+  const exitRules: string[] = [];
+
+  const getLookback = (when: any, eventId: string) => {
+    if (!when || !Array.isArray(when.all)) return null;
+    const hit = when.all.find((c: any) => c?.event_within?.event_id === eventId);
+    return hit?.event_within?.lookback ?? null;
+  };
+
+  const maWindow = indicators.find((i: any) => i?.type === "MA")?.params?.window || "20d";
+
+  const friendlyStage = (id: string, when: any) => {
+    const lower = id.toLowerCase();
+    if (lower.includes("stage1")) {
+      return locale === "zh"
+        ? `Stage1：KDJ 日线金叉 → 买入 20%`
+        : `Stage1: KDJ daily cross up → buy 20%`;
+    }
+    if (lower.includes("stage2")) {
+      const lb = getLookback(when, "ev_kdj_up") || "30d";
+      return locale === "zh"
+        ? `Stage2：最近 ${lb} 内出现 KDJ 金叉 且 当前日线收盘价 > ${maWindow} MA → 再买入 40%`
+        : `Stage2: KDJ cross up within ${lb} AND close > ${maWindow} MA → buy 40%`;
+    }
+    if (lower.includes("stage3")) {
+      const lb1 = getLookback(when, "ev_above_ma_n") || "30d";
+      const lb2 = getLookback(when, "ev_macd_up") || "30d";
+      return locale === "zh"
+        ? `Stage3：最近 ${lb1} 内“站上 ${maWindow} MA” 且 最近 ${lb2} 内 MACD 金叉 → 再买入 40%`
+        : `Stage3: above ${maWindow} MA within ${lb1} AND MACD cross up within ${lb2} → buy 40%`;
+    }
+    return "";
+  };
+
+  rules.forEach((r: any) => {
+    const id = String(r.id || "rule");
+    const when = r.when || {};
+    const hasSell = (r.then || []).some((t: any) => String(t.action_id || "").toLowerCase().includes("sell"));
+    const isExit = hasSell || id.includes("exit");
+
+    const friendly = !isExit ? friendlyStage(id, when) : "";
+    if (friendly) {
+      entryRules.push(friendly);
+      return;
+    }
+
+    const describeWhen = () => {
+      if (when.event_id) {
+        return formatEvent(when.event_id);
+      }
+      if (Array.isArray(when.all)) {
+        const parts = when.all.map((cond: any) => {
+          if (cond.event_within) {
+            return `event_within(${cond.event_within.event_id}, ${cond.event_within.lookback})`;
+          }
+          if (cond.event_id) {
+            return formatEvent(cond.event_id);
+          }
+          return JSON.stringify(cond);
+        });
+        return parts.join(" AND ");
+      }
+      return JSON.stringify(when);
+    };
+
+    const line = `${id}: ${describeWhen()}`;
+    if (isExit) exitRules.push(line); else entryRules.push(line);
+  });
 
   const structure: string[] = [];
   structure.push(locale === "zh"
     ? `观察标的：${signal}；交易标的：${trade}`
     : `Signal symbol: ${signal}; Trade symbol: ${trade}`);
-  if (tfs.length > 0) {
-    structure.push(locale === "zh"
-      ? `指标周期：${tfs.join(", ")}`
-      : `Indicator timeframes: ${tfs.join(", ")}`);
+
+  const indicatorSummary = Object.keys(indicatorTfs)
+    .map((k) => `${k}(${Array.from(indicatorTfs[k]).join(", ")})`)
+    .join(", ");
+  if (indicatorSummary) {
+    structure.push(locale === "zh" ? `指标周期：${indicatorSummary}` : `Indicators/timeframes: ${indicatorSummary}`);
   }
+
   structure.push(locale === "zh"
     ? `规则数量：${rules.length}，事件数量：${events.length}，动作数量：${actions.length}`
     : `Rules: ${rules.length}, Events: ${events.length}, Actions: ${actions.length}`);
-  const stageRules = rules.map((r: any) => String(r.id || "rule"));
-  if (stageRules.length > 0) {
-    structure.push(locale === "zh"
-      ? `规则列表：${stageRules.join(", ")}`
-      : `Rule IDs: ${stageRules.join(", ")}`);
-  }
+
   const actionFractions = actions
     .map((a: any) => a?.qty?.mode === "FRACTION_OF_EQUITY" ? Number(a.qty.value) : null)
     .filter((v: any) => typeof v === "number");
   if (actionFractions.length > 0) {
     const pct = actionFractions.map((v: number) => `${Math.round(v * 100)}%`).join(", ");
     structure.push(locale === "zh" ? `分段仓位：${pct}` : `Stage sizes: ${pct}`);
+  }
+
+  if (entryRules.length > 0) {
+    structure.push(locale === "zh" ? `入场规则：${entryRules.join(" | ")}` : `Entry rules: ${entryRules.join(" | ")}`);
+  }
+  if (exitRules.length > 0) {
+    structure.push(locale === "zh" ? `出场规则：${exitRules.join(" | ")}` : `Exit rules: ${exitRules.join(" | ")}`);
   }
 
   const consistency: string[] = [];
@@ -383,10 +484,11 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
     text.includes("日线") || text.includes("日级") || textLower.includes("daily") ? "1d" :
     text.includes("4小时") || textLower.includes("4h") || text.includes("小时") ? "4h" :
     text.includes("分钟") || textLower.includes("min") ? "1m" : null;
-  if (tfMentioned && tfs.length > 0 && !tfs.includes(tfMentioned)) {
+  const indicatorTfsAll = Array.from(new Set(Object.values(indicatorTfs).flatMap((v) => Array.from(v))));
+  if (tfMentioned && indicatorTfsAll.length > 0 && !indicatorTfsAll.includes(tfMentioned)) {
     consistency.push(locale === "zh"
-      ? `文字周期为 ${tfMentioned}，DSL 指标周期为 ${tfs.join(", ")}。`
-      : `Text timeframe ${tfMentioned} but DSL uses ${tfs.join(", ")}.`);
+      ? `文字周期为 ${tfMentioned}，DSL 指标周期为 ${indicatorTfsAll.join(", ")}。`
+      : `Text timeframe ${tfMentioned} but DSL uses ${indicatorTfsAll.join(", ")}.`);
   }
 
   const textSymbols = new Set((text.match(/\b[A-Z]{2,6}\b/g) || []));
@@ -420,7 +522,7 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
     consistency.push(locale === "zh" ? "未发现明显不一致。" : "No obvious inconsistencies found.");
   }
 
-  const conclusion = consistency.some((l) => l.includes("未找到") || l.includes("不") || l.includes("but"))
+  const conclusion = consistency.some((l) => l.includes("未找到") || l.includes("不是") || l.includes("but"))
     ? (locale === "zh" ? "结论：当前 DSL 与策略文字不完全一致，建议使用下方按钮对齐。" : "Conclusion: DSL is not fully consistent with the text; consider aligning.")
     : (locale === "zh" ? "结论：当前 DSL 与策略文字基本一致。" : "Conclusion: DSL is broadly consistent with the text.");
 
@@ -468,4 +570,12 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
+
+
+
+
+
+
+
 

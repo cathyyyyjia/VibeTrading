@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Home Page - Main application layout
 // Design: Swiss Precision
 // Layout: TopNav + Left (Strategy Designer 65%) + Right (AI Workspace 35%)
@@ -104,3 +104,6 @@ export default function Home() {
     </div>
   );
 }
+
+
+

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // StrategyDesigner - Left column: input + simulation results
 // Design: Swiss Precision - clean hierarchy, generous spacing
 // ============================================================
@@ -15,6 +15,7 @@ import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
 interface StrategyDesignerProps {
   status: AppStatus;
   prompt: string;
+  artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
   onPromptChange: (value: string) => void;
   onRunBacktest: () => void;
   indicatorPreferences: IndicatorPreferences;
@@ -28,7 +29,6 @@ interface StrategyDesignerProps {
   onBacktestDateRangeChange: (next: { startDate: string; endDate: string }) => void;
   report: RunReportResponse | null;
   runId: string | null;
-  artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
   error: string | null;
   onRetry: () => void;
 }
@@ -36,6 +36,7 @@ interface StrategyDesignerProps {
 export default function StrategyDesigner({
   status,
   prompt,
+  artifacts,
   onPromptChange,
   onRunBacktest,
   indicatorPreferences,
@@ -49,7 +50,6 @@ export default function StrategyDesigner({
   onBacktestDateRangeChange,
   report,
   runId,
-  artifacts,
   error,
   onRetry,
 }: StrategyDesignerProps) {
@@ -90,6 +90,7 @@ export default function StrategyDesigner({
         report={report}
         status={status}
         runId={runId}
+        prompt={prompt}
         artifacts={artifacts}
         indicatorPreferences={indicatorPreferences}
         backtestStartDate={backtestStartDate}
@@ -103,3 +104,7 @@ export default function StrategyDesigner({
     </div>
   );
 }
+
+
+
+
