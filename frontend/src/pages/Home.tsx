@@ -24,12 +24,14 @@ export default function Home() {
     error: backtestError,
     statusMessage,
     indicatorPreferences,
+    dslOverride,
     backtestWindowPreset,
     backtestStartDate,
     backtestEndDate,
     activeRunWindow,
     setPrompt,
     setIndicatorPreferences,
+    setDslOverride,
     setBacktestWindowPreset,
     setBacktestDateRange,
     runBacktest,
@@ -57,6 +59,8 @@ export default function Home() {
               onRunBacktest={runBacktest}
               indicatorPreferences={indicatorPreferences}
               onIndicatorPreferencesChange={setIndicatorPreferences}
+              dslOverride={dslOverride}
+              onDslOverrideChange={setDslOverride}
               backtestWindowPreset={backtestWindowPreset}
               backtestStartDate={backtestStartDate}
               backtestEndDate={backtestEndDate}

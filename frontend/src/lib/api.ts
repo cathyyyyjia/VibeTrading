@@ -109,6 +109,7 @@ export interface CreateRunOptions {
   startDate?: string;
   endDate?: string;
   llmIndicatorPreferences?: IndicatorPreferences;
+  overrides?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -317,6 +318,7 @@ export async function createRun(prompt: string, options?: CreateRunOptions): Pro
   const startDate = typeof options?.startDate === "string" ? options.startDate : "2025-01-01";
   const endDate = typeof options?.endDate === "string" ? options.endDate : "2025-12-31";
   const llmIndicatorPreferences = options?.llmIndicatorPreferences;
+  const overrides = options?.overrides;
   const res = await apiFetch(`/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -326,6 +328,7 @@ export async function createRun(prompt: string, options?: CreateRunOptions): Pro
       mode,
       start_date: startDate,
       end_date: endDate,
+      overrides: overrides ?? null,
       llm_indicator_preferences: llmIndicatorPreferences ?? null,
     }),
   }, { timeoutMs: 180000 });

@@ -26,12 +26,14 @@ export interface UseBacktestReturn {
   error: string | null;
   statusMessage: string;
   indicatorPreferences: api.IndicatorPreferences;
+  dslOverride: Record<string, unknown> | null;
   backtestWindowPreset: BacktestWindowPreset;
   backtestStartDate: string;
   backtestEndDate: string;
   activeRunWindow: { startDate: string; endDate: string } | null;
   setPrompt: (v: string) => void;
   setIndicatorPreferences: (next: api.IndicatorPreferences) => void;
+  setDslOverride: (next: Record<string, unknown> | null) => void;
   setBacktestWindowPreset: (preset: BacktestWindowPreset) => void;
   setBacktestDateRange: (next: { startDate: string; endDate: string }) => void;
   toggleFilter: (id: string) => void;
@@ -98,6 +100,7 @@ export function useBacktest(): UseBacktestReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [indicatorPreferences, setIndicatorPreferences] = useState<api.IndicatorPreferences>(DEFAULT_INDICATOR_PREFERENCES);
+  const [dslOverride, setDslOverride] = useState<Record<string, unknown> | null>(null);
   const [backtestWindowPreset, setBacktestWindowPresetState] = useState<BacktestWindowPreset>("all");
   const [backtestDateRange, setBacktestDateRangeState] = useState(() => getPresetDateRange("all"));
   const [activeRunWindow, setActiveRunWindow] = useState<{ startDate: string; endDate: string } | null>(null);
@@ -339,6 +342,7 @@ export function useBacktest(): UseBacktestReturn {
         mode: "BACKTEST_ONLY",
         startDate: backtestDateRange.startDate,
         endDate: backtestDateRange.endDate,
+        overrides: dslOverride ?? undefined,
         llmIndicatorPreferences: indicatorPreferences,
       });
       setStatus("running");
@@ -414,12 +418,14 @@ export function useBacktest(): UseBacktestReturn {
     error,
     statusMessage,
     indicatorPreferences,
+    dslOverride,
     backtestWindowPreset,
     backtestStartDate: backtestDateRange.startDate,
     backtestEndDate: backtestDateRange.endDate,
     activeRunWindow,
     setPrompt,
     setIndicatorPreferences,
+    setDslOverride,
     setBacktestWindowPreset,
     setBacktestDateRange,
     toggleFilter,

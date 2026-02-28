@@ -19,6 +19,8 @@ interface StrategyDesignerProps {
   onRunBacktest: () => void;
   indicatorPreferences: IndicatorPreferences;
   onIndicatorPreferencesChange: (next: IndicatorPreferences) => void;
+  dslOverride: Record<string, unknown> | null;
+  onDslOverrideChange: (next: Record<string, unknown> | null) => void;
   backtestWindowPreset: BacktestWindowPreset;
   backtestStartDate: string;
   backtestEndDate: string;
@@ -37,6 +39,8 @@ export default function StrategyDesigner({
   onRunBacktest,
   indicatorPreferences,
   onIndicatorPreferencesChange,
+  dslOverride,
+  onDslOverrideChange,
   backtestWindowPreset,
   backtestStartDate,
   backtestEndDate,
@@ -87,6 +91,8 @@ export default function StrategyDesigner({
         indicatorPreferences={indicatorPreferences}
         backtestStartDate={backtestStartDate}
         backtestEndDate={backtestEndDate}
+        dslOverride={dslOverride}
+        onDslOverrideChange={onDslOverrideChange}
       />
 
       {/* History Panel */}

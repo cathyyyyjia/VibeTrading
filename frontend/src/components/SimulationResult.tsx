@@ -10,7 +10,9 @@ import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
-import { useMemo, useState } from 'react';
+import { getRunArtifact } from '@/lib/api';
+import { toast } from 'sonner';
+import { useMemo, useState, useEffect } from 'react';
 
 interface SimulationResultProps {
   report: RunReportResponse | null;
@@ -19,6 +21,8 @@ interface SimulationResultProps {
   indicatorPreferences: IndicatorPreferences;
   backtestStartDate: string;
   backtestEndDate: string;
+  dslOverride: Record<string, unknown> | null;
+  onDslOverrideChange: (next: Record<string, unknown> | null) => void;
 }
 
 export default function SimulationResult({
@@ -28,15 +32,43 @@ export default function SimulationResult({
   indicatorPreferences,
   backtestStartDate,
   backtestEndDate,
+  dslOverride,
+  onDslOverrideChange,
 }: SimulationResultProps) {
   const { t, locale } = useI18n();
   const [hoveredTrade, setHoveredTrade] = useState<TradeRecord | null>(null);
   const [pinnedTrade, setPinnedTrade] = useState<TradeRecord | null>(null);
+  const [dslContent, setDslContent] = useState<any | null>(null);
+  const [dslText, setDslText] = useState<string>("");
+  const [dslTab, setDslTab] = useState<"view" | "explain" | "edit">("view");
+  const [dslError, setDslError] = useState<string | null>(null);
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const range = `${backtestStartDate} - ${backtestEndDate}`;
   const activeTrade = useMemo(() => hoveredTrade ?? pinnedTrade, [hoveredTrade, pinnedTrade]);
   const divergences = report?.divergences || [];
+  const aiExplain = useMemo(() => buildDslExplanation(dslContent, locale), [dslContent, locale]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadDsl = async () => {
+      if (!runId) return;
+      try {
+        const res = await getRunArtifact(runId, "dsl.json");
+        if (cancelled) return;
+        const content = res?.content ?? null;
+        setDslContent(content);
+        setDslText(content ? JSON.stringify(content, null, 2) : "");
+        setDslError(null);
+      } catch {
+        if (!cancelled) setDslError(locale === "zh" ? "DSL 获取失败" : "Failed to load DSL");
+      }
+    };
+    void loadDsl();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, locale]);
 
   const getTradeKey = (trade: TradeRecord | null) => {
     if (!trade) return "";
@@ -98,6 +130,89 @@ export default function SimulationResult({
         loading={isLoading && !report}
       />
 
+      {/* DSL Viewer / AI Explain / Editor */}
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+          <div className="text-xs font-semibold text-foreground">DSL</div>
+          <div className="flex items-center gap-2">
+            <button
+              className={`text-[11px] px-2 py-1 rounded ${dslTab === "view" ? "bg-foreground text-primary-foreground" : "bg-muted text-foreground"}`}
+              onClick={() => setDslTab("view")}
+            >
+              {locale === "zh" ? "查看" : "View"}
+            </button>
+            <button
+              className={`text-[11px] px-2 py-1 rounded ${dslTab === "explain" ? "bg-foreground text-primary-foreground" : "bg-muted text-foreground"}`}
+              onClick={() => setDslTab("explain")}
+            >
+              {locale === "zh" ? "AI 解读" : "AI Explain"}
+            </button>
+            <button
+              className={`text-[11px] px-2 py-1 rounded ${dslTab === "edit" ? "bg-foreground text-primary-foreground" : "bg-muted text-foreground"}`}
+              onClick={() => setDslTab("edit")}
+            >
+              {locale === "zh" ? "编辑" : "Edit"}
+            </button>
+          </div>
+        </div>
+        <div className="p-3">
+          {dslError && <div className="text-xs text-red-500">{dslError}</div>}
+          {dslTab === "view" && (
+            <pre className="text-[11px] leading-relaxed bg-muted/40 p-3 rounded-md overflow-auto max-h-[280px]">
+              {dslText || (locale === "zh" ? "暂无 DSL" : "No DSL")}
+            </pre>
+          )}
+          {dslTab === "explain" && (
+            <div className="text-xs text-foreground space-y-2">
+              {aiExplain.map((line, idx) => (
+                <div key={idx} className="leading-relaxed">{line}</div>
+              ))}
+            </div>
+          )}
+          {dslTab === "edit" && (
+            <div className="space-y-2">
+              <textarea
+                value={dslText}
+                onChange={(e) => setDslText(e.target.value)}
+                rows={10}
+                className="w-full text-[11px] leading-relaxed border border-border rounded-md p-2 bg-background"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  className="text-[11px] px-3 py-1.5 rounded bg-foreground text-primary-foreground"
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(dslText || "{}");
+                      const payload = parsed.dsl ? parsed : { dsl: parsed };
+                      onDslOverrideChange(payload);
+                      toast.success(locale === "zh" ? "DSL 已应用到下一次回测" : "DSL override applied to next run");
+                    } catch {
+                      toast.error(locale === "zh" ? "DSL 解析失败" : "Invalid DSL JSON");
+                    }
+                  }}
+                >
+                  {locale === "zh" ? "应用到下一次回测" : "Apply to Next Run"}
+                </button>
+                <button
+                  className="text-[11px] px-3 py-1.5 rounded bg-muted text-foreground"
+                  onClick={() => {
+                    onDslOverrideChange(null);
+                    toast.message(locale === "zh" ? "已清除 DSL 覆盖" : "DSL override cleared");
+                  }}
+                >
+                  {locale === "zh" ? "清除覆盖" : "Clear Override"}
+                </button>
+                {dslOverride && (
+                  <span className="text-[11px] text-amber-600">
+                    {locale === "zh" ? "已启用 DSL 覆盖" : "DSL override active"}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {divergences.length > 0 && (
         <DivergenceSection divergences={divergences} locale={locale} />
       )}
@@ -118,6 +233,34 @@ export default function SimulationResult({
       />
     </div>
   );
+}
+
+function buildDslExplanation(dslContent: any, locale: "en" | "zh"): string[] {
+  if (!dslContent || typeof dslContent !== "object") {
+    return [locale === "zh" ? "没有可解读的 DSL。" : "No DSL to explain."];
+  }
+  const spec = dslContent.dsl ? dslContent : dslContent;
+  const universe = spec.universe || {};
+  const signal = universe.signal_symbol || universe.signal || "N/A";
+  const trade = universe.trade_symbol || universe.trade || "N/A";
+  const rules = spec.dsl?.logic?.rules || [];
+  const events = spec.dsl?.signal?.events || [];
+  const actions = spec.dsl?.action?.actions || [];
+
+  const lines: string[] = [];
+  lines.push(locale === "zh"
+    ? `观察标的：${signal}；交易标的：${trade}`
+    : `Signal symbol: ${signal}; Trade symbol: ${trade}`);
+  lines.push(locale === "zh"
+    ? `规则数量：${rules.length}，事件数量：${events.length}，动作数量：${actions.length}`
+    : `Rules: ${rules.length}, Events: ${events.length}, Actions: ${actions.length}`);
+  const stageRules = rules.map((r: any) => String(r.id || "rule"));
+  if (stageRules.length > 0) {
+    lines.push(locale === "zh"
+      ? `规则列表：${stageRules.join(", ")}`
+      : `Rule IDs: ${stageRules.join(", ")}`);
+  }
+  return lines;
 }
 
 function DivergenceSection({ divergences, locale }: { divergences: DivergenceSignal[]; locale: "en" | "zh" }) {
