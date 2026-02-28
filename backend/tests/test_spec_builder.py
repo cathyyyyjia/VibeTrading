@@ -351,3 +351,33 @@ async def test_complex_prompt_marks_guard_when_llm_unavailable(monkeypatch: pyte
   meta = spec.get("meta") or {}
   assert meta.get("generation_mode") == "fallback"
   assert meta.get("fallback_guard_triggered") is True
+
+
+@pytest.mark.asyncio
+async def test_cn_staged_prompt_gets_deterministic_override(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fail_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    raise AppError("INTERNAL", "LLM request failed", {"status": 502}, http_status=502)
+
+  monkeypatch.setattr(llm_client, "chat_json", _fail_chat_json)
+  spec = await nl_to_strategy_spec(
+    "观察QQQ，当QQQ周线级别KDJ金叉后建仓20%TQQQ, 随后QQQ在周收盘前站上20日MA再加仓40%仓位TQQQ，周线macd金叉再加40%。当QQQ周线级别KDJ已经死叉且收盘MACD周线死叉的时候清仓TQQQ",
+    "BACKTEST_ONLY",
+    indicator_preferences={
+      "indicatorKinds": ["MA", "MACD", "KDJ"],
+      "macdFast": 12,
+      "macdSlow": 26,
+      "macdSignal": 9,
+      "kdjPeriod": 9,
+      "kdjKSmooth": 3,
+      "kdjDSmooth": 3,
+      "maWindowDays": 20,
+    },
+  )
+  assert spec.get("universe") == {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"}
+  dsl = spec.get("dsl") or {}
+  rules = (((dsl.get("logic") or {}).get("rules")) or [])
+  actions = (((dsl.get("action") or {}).get("actions")) or [])
+  rule_ids = {r.get("id") for r in rules if isinstance(r, dict)}
+  action_ids = {a.get("id") for a in actions if isinstance(a, dict)}
+  assert {"rule_stage1", "rule_stage2", "rule_stage3", "rule_exit"} <= rule_ids
+  assert {"buy_stage1", "buy_stage2", "buy_stage3", "sell_all"} <= action_ids

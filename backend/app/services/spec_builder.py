@@ -550,6 +550,162 @@ def _extract_primary_symbol(nl_text: str) -> str:
   return "QQQ"
 
 
+def _extract_ticker_candidates(nl_text: str) -> list[str]:
+  blacklist = {
+    "MACD",
+    "MA",
+    "RSI",
+    "KDJ",
+    "BUY",
+    "SELL",
+    "AND",
+    "OR",
+  }
+  out: list[str] = []
+  for tok in re.findall(r"\b[A-Za-z]{2,8}\b", nl_text.upper()):
+    if tok in blacklist:
+      continue
+    if tok not in out:
+      out.append(tok)
+  return out
+
+
+def _extract_percent_values(nl_text: str) -> list[float]:
+  vals: list[float] = []
+  for m in re.findall(r"(\d{1,3})\s*%", nl_text):
+    try:
+      v = max(0.0, min(100.0, float(m)))
+      vals.append(v / 100.0)
+    except Exception:
+      continue
+  return vals
+
+
+def _extract_ma_days(nl_text: str, default: int = 20) -> int:
+  patterns = [
+    r"(\d{1,3})\s*日\s*ma",
+    r"ma\s*(\d{1,3})",
+  ]
+  lower = nl_text.lower()
+  for p in patterns:
+    m = re.search(p, lower)
+    if not m:
+      continue
+    try:
+      return max(1, int(m.group(1)))
+    except Exception:
+      continue
+  return default
+
+
+def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator_preferences: dict[str, Any] | None) -> bool:
+  text = nl_text.lower()
+  required_tokens = ["kdj", "macd"]
+  has_kdj = "金叉" in nl_text and "死叉" in nl_text and "kdj" in text
+  has_macd = "金叉" in nl_text and "死叉" in nl_text and "macd" in text
+  has_ma = ("ma" in text and ("站上" in nl_text or "收盘前站上" in nl_text)) or ("20日" in nl_text and "ma" in text)
+  has_stage = "加仓" in nl_text and "%" in nl_text
+  if not (all(tok in text for tok in required_tokens) and has_kdj and has_macd and has_ma and has_stage):
+    return False
+
+  tickers = _extract_ticker_candidates(nl_text)
+  signal_symbol = tickers[0] if len(tickers) >= 1 else "QQQ"
+  trade_symbol = tickers[1] if len(tickers) >= 2 else signal_symbol
+  if "QQQ" in tickers and "TQQQ" in tickers:
+    signal_symbol = "QQQ"
+    trade_symbol = "TQQQ"
+
+  prefs = indicator_preferences if isinstance(indicator_preferences, dict) else {}
+  macd_fast = _read_int_pref(prefs, ["macdFast", "macd_fast"], 12)
+  macd_slow = _read_int_pref(prefs, ["macdSlow", "macd_slow"], 26)
+  macd_signal = _read_int_pref(prefs, ["macdSignal", "macd_signal"], 9)
+  kdj_period = _read_int_pref(prefs, ["kdjPeriod", "kdj_period"], 9)
+  kdj_k = _read_int_pref(prefs, ["kdjKSmooth", "kdj_k_smooth"], 3)
+  kdj_d = _read_int_pref(prefs, ["kdjDSmooth", "kdj_d_smooth"], 3)
+  ma_days = _extract_ma_days(nl_text, default=20)
+
+  fractions = _extract_percent_values(nl_text)
+  buy1, buy2, buy3 = (fractions + [0.2, 0.4, 0.4])[:3]
+
+  spec["name"] = f"{signal_symbol}/{trade_symbol} staged weekly-style strategy"
+  spec["universe"] = {"signal_symbol": signal_symbol, "trade_symbol": trade_symbol}
+  spec["risk"] = {"cooldown": {"scope": "SYMBOL_ACTION", "value": "1d"}, "max_orders_per_day": 4}
+  spec["dsl"] = {
+    "atomic": {
+      "symbols": {"signal": signal_symbol, "trade": trade_symbol},
+      "constants": {"lookback": "30d", "sell_fraction": 1.0, "initial_position_qty": 0.0, "initial_cash": 10000.0},
+    },
+    "time": {
+      "primary_tf": "1m",
+      "derived_tfs": ["4h", "1d"],
+      "aggregation": {"4h": "SESSION_ALIGNED_4H", "1d": "SESSION_ALIGNED_1D"},
+    },
+    "signal": {
+      "indicators": [
+        {
+          "id": "kdj_1d",
+          "type": "KDJ",
+          "tf": "1d",
+          "symbol_ref": "signal",
+          "align": "LAST_CLOSED",
+          "params": {"fast": kdj_k, "slow": kdj_d, "signal": None, "period": kdj_period, "window": None, "bar_selection": None, "stddev_mult": None},
+        },
+        {
+          "id": "macd_1d",
+          "type": "MACD",
+          "tf": "1d",
+          "symbol_ref": "signal",
+          "align": "LAST_CLOSED",
+          "params": {"fast": macd_fast, "slow": macd_slow, "signal": macd_signal, "period": None, "window": None, "bar_selection": None, "stddev_mult": None},
+        },
+        {
+          "id": "close_1d",
+          "type": "CLOSE",
+          "tf": "1d",
+          "symbol_ref": "signal",
+          "align": "LAST_CLOSED",
+          "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": None, "bar_selection": "LAST_CLOSED_1D", "stddev_mult": None},
+        },
+        {
+          "id": "ma_n_1d",
+          "type": "MA",
+          "tf": "1d",
+          "symbol_ref": "signal",
+          "align": "LAST_CLOSED",
+          "params": {"fast": None, "slow": None, "signal": None, "period": None, "window": f"{ma_days}d", "bar_selection": "LAST_CLOSED_1D", "stddev_mult": None},
+        },
+      ],
+      "events": [
+        {"id": "ev_kdj_up", "type": "CROSS_UP", "a": "kdj_1d.k", "b": "kdj_1d.d", "left": None, "right": None, "direction": "UP", "op": None, "value": None, "tf": "1d"},
+        {"id": "ev_kdj_down", "type": "CROSS_DOWN", "a": "kdj_1d.k", "b": "kdj_1d.d", "left": None, "right": None, "direction": "DOWN", "op": None, "value": None, "tf": "1d"},
+        {"id": "ev_macd_up", "type": "CROSS_UP", "a": "macd_1d.macd", "b": "macd_1d.signal", "left": None, "right": None, "direction": "UP", "op": None, "value": None, "tf": "1d"},
+        {"id": "ev_macd_down", "type": "CROSS_DOWN", "a": "macd_1d.macd", "b": "macd_1d.signal", "left": None, "right": None, "direction": "DOWN", "op": None, "value": None, "tf": "1d"},
+        {"id": "ev_above_ma_n", "type": "THRESHOLD", "a": None, "b": None, "left": "close_1d.value", "right": "ma_n_1d.value", "direction": None, "op": ">", "value": None, "tf": "1d"},
+      ],
+    },
+    "logic": {
+      "rules": [
+        {"id": "rule_stage1", "when": {"event_id": "ev_kdj_up", "scope": "BAR"}, "then": [{"action_id": "buy_stage1"}]},
+        {"id": "rule_stage2", "when": {"all": [{"event_within": {"event_id": "ev_kdj_up", "lookback": "30d"}}, {"event_id": "ev_above_ma_n", "scope": "BAR"}]}, "then": [{"action_id": "buy_stage2"}]},
+        {"id": "rule_stage3", "when": {"all": [{"event_within": {"event_id": "ev_above_ma_n", "lookback": "30d"}}, {"event_id": "ev_macd_up", "scope": "BAR"}]}, "then": [{"action_id": "buy_stage3"}]},
+        {"id": "rule_exit", "when": {"all": [{"event_id": "ev_kdj_down", "scope": "BAR"}, {"event_id": "ev_macd_down", "scope": "BAR"}]}, "then": [{"action_id": "sell_all"}]},
+      ]
+    },
+    "action": {
+      "actions": [
+        {"id": "buy_stage1", "type": "ORDER", "symbol_ref": "trade", "side": "BUY", "qty": {"mode": "FRACTION_OF_EQUITY", "value": buy1}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+        {"id": "buy_stage2", "type": "ORDER", "symbol_ref": "trade", "side": "BUY", "qty": {"mode": "FRACTION_OF_EQUITY", "value": buy2}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+        {"id": "buy_stage3", "type": "ORDER", "symbol_ref": "trade", "side": "BUY", "qty": {"mode": "FRACTION_OF_EQUITY", "value": buy3}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+        {"id": "sell_all", "type": "ORDER", "symbol_ref": "trade", "side": "SELL", "qty": {"mode": "FULL_POSITION", "value": 1.0}, "order_type": "MOC", "time_in_force": None, "idempotency_scope": "SYMBOL_ACTION", "cooldown": "1d"},
+      ]
+    },
+  }
+  meta = spec.get("meta")
+  if isinstance(meta, dict):
+    meta["deterministic_override"] = "cn_kdj_macd_ma_staged"
+  return True
+
+
 def _requires_precise_llm_parsing(nl_text: str, indicator_preferences: dict[str, Any] | None) -> bool:
   text = (nl_text or "").lower()
   risk_tokens = [
@@ -1148,7 +1304,9 @@ Output requirements:
       spec = _assemble_final_strategy_spec(draft=draft, nl_text=nl_text, mode=mode)
       if overrides and isinstance(overrides, dict):
         spec = _deep_merge(spec, overrides)
-      _apply_indicator_preferences(spec, indicator_preferences)
+      deterministic_applied = _apply_cn_multi_stage_override(spec, nl_text, indicator_preferences)
+      if not deterministic_applied:
+        _apply_indicator_preferences(spec, indicator_preferences)
       _normalize_cross_event_window_semantics(spec)
       _apply_divergence_preferences(spec, indicator_preferences)
       spec["strategy_version"] = "v0"
@@ -1183,7 +1341,9 @@ Output requirements:
         )
     if overrides and isinstance(overrides, dict):
       fallback = _deep_merge(fallback, overrides)
-    _apply_indicator_preferences(fallback, indicator_preferences)
+    deterministic_applied = _apply_cn_multi_stage_override(fallback, nl_text, indicator_preferences)
+    if not deterministic_applied:
+      _apply_indicator_preferences(fallback, indicator_preferences)
     _normalize_cross_event_window_semantics(fallback)
     _apply_divergence_preferences(fallback, indicator_preferences)
     return fallback
