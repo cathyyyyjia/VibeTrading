@@ -600,12 +600,14 @@ def _extract_ma_days(nl_text: str, default: int = 20) -> int:
 
 def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator_preferences: dict[str, Any] | None) -> bool:
   text = nl_text.lower()
-  required_tokens = ["kdj", "macd"]
-  has_kdj = "金叉" in nl_text and "死叉" in nl_text and "kdj" in text
-  has_macd = "金叉" in nl_text and "死叉" in nl_text and "macd" in text
-  has_ma = ("ma" in text and ("站上" in nl_text or "收盘前站上" in nl_text)) or ("20日" in nl_text and "ma" in text)
-  has_stage = "加仓" in nl_text and "%" in nl_text
-  if not (all(tok in text for tok in required_tokens) and has_kdj and has_macd and has_ma and has_stage):
+  text_upper = nl_text.upper()
+  kinds = _normalized_indicator_kinds(indicator_preferences)
+  fractions = _extract_percent_values(nl_text)
+  has_kdj = ("KDJ" in text_upper) or ("KDJ" in kinds)
+  has_macd = ("MACD" in text_upper) or ("MACD" in kinds)
+  has_ma = ("MA" in text_upper) or ("MA" in kinds)
+  has_stage = len(fractions) >= 2
+  if not (has_kdj and has_macd and has_ma and has_stage):
     return False
 
   tickers = _extract_ticker_candidates(nl_text)
@@ -624,7 +626,6 @@ def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator
   kdj_d = _read_int_pref(prefs, ["kdjDSmooth", "kdj_d_smooth"], 3)
   ma_days = _extract_ma_days(nl_text, default=20)
 
-  fractions = _extract_percent_values(nl_text)
   buy1, buy2, buy3 = (fractions + [0.2, 0.4, 0.4])[:3]
 
   spec["name"] = f"{signal_symbol}/{trade_symbol} staged weekly-style strategy"
