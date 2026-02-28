@@ -494,10 +494,10 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
   const textSymbols = new Set((text.match(/\b[A-Z]{2,6}\b/g) || []));
   if (textSymbols.size > 0) {
     if (textSymbols.has("QQQ") && signal !== "QQQ") {
-      consistency.push(locale === "zh" ? "文字提到观察 QQQ，但 DSL 观察标的不是 QQQ。" : "Text mentions QQQ as signal, but DSL signal differs.");
+      consistency.push(locale === "zh" ? "[MISMATCH] 文字提到观察 QQQ，但 DSL 观察标的不是 QQQ。" : "[MISMATCH] Text mentions QQQ as signal, but DSL signal differs.");
     }
     if (textSymbols.has("TQQQ") && trade !== "TQQQ") {
-      consistency.push(locale === "zh" ? "文字提到交易 TQQQ，但 DSL 交易标的不是 TQQQ。" : "Text mentions TQQQ as trade, but DSL trade differs.");
+      consistency.push(locale === "zh" ? "[MISMATCH] 文字提到交易 TQQQ，但 DSL 交易标的不是 TQQQ。" : "[MISMATCH] Text mentions TQQQ as trade, but DSL trade differs.");
     }
   }
 
@@ -506,24 +506,23 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
     const dslPct = actionFractions.map((v: number) => Math.round(v * 100)).sort((a, b) => a - b);
     const textPct = [...pctMatches].sort((a, b) => a - b);
     if (dslPct.join(",") !== textPct.join(",")) {
-      consistency.push(locale === "zh"
-        ? `文字分仓为 ${textPct.join(", ")}%，DSL 分仓为 ${dslPct.join(", ")}%。`
-        : `Text stages ${textPct.join(", ")}%, DSL stages ${dslPct.join(", ")}%.`);
+      consistency.push(locale === "zh" ? `[MISMATCH] 文字分仓为 ${textPct.join(", ")}%，DSL 分仓为 ${dslPct.join(", ")}%。` : `[MISMATCH] Text stages ${textPct.join(", ")}%, DSL stages ${dslPct.join(", ")}%.`);
     }
   }
 
   const hasLookback = rules.some((r: any) => JSON.stringify(r?.when || {}).includes("event_within"));
   const textHasLookback = /过去|最近|近|within|last/i.test(text);
   if (hasLookback && !textHasLookback) {
-    consistency.push(locale === "zh" ? "DSL 使用了“最近/过去 N 天”条件，但文字未明确说明。" : "DSL uses lookback windows, but text does not mention them.");
+    consistency.push(locale === "zh" ? "[MISMATCH] DSL 使用了“最近/过去 N 天”条件，但文字未明确说明。" : "[MISMATCH] DSL uses lookback windows, but text does not mention them.");
   }
 
   if (consistency.length === 0) {
     consistency.push(locale === "zh" ? "未发现明显不一致。" : "No obvious inconsistencies found.");
   }
 
-  const conclusion = consistency.some((l) => l.includes("未找到") || l.includes("不是") || l.includes("but"))
-    ? (locale === "zh" ? "结论：当前 DSL 与策略文字不完全一致，建议使用下方按钮对齐。" : "Conclusion: DSL is not fully consistent with the text; consider aligning.")
+  const hasMismatch = consistency.some((l) => l.includes("[MISMATCH]"));
+  const conclusion = hasMismatch
+    ? (locale === "zh" ? "结论：当前 DSL 与策略文字不一致。" : "Conclusion: DSL is NOT consistent with the text.")
     : (locale === "zh" ? "结论：当前 DSL 与策略文字基本一致。" : "Conclusion: DSL is broadly consistent with the text.");
 
   return { structure, consistency, conclusion };
@@ -570,6 +569,7 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
 
 
 
