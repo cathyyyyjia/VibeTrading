@@ -113,6 +113,16 @@ export interface CreateRunOptions {
   [key: string]: unknown;
 }
 
+export async function parseStrategy(nl: string, mode: V0Mode = "BACKTEST_ONLY"): Promise<{ spec: any }> {
+  const res = await apiFetch(`/api/strategies/parse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nl, mode }),
+  }, { timeoutMs: 120000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to parse strategy"));
+  return res.json();
+}
+
 export interface StepInfo {
   key: string;
   title: string;

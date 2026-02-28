@@ -10,7 +10,7 @@ import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
-import { getRunArtifact } from '@/lib/api';
+import { getRunArtifact, parseStrategy } from '@/lib/api';
 import { toast } from 'sonner';
 import { useMemo, useState, useEffect } from 'react';
 
@@ -44,12 +44,14 @@ export default function SimulationResult({
   const [dslText, setDslText] = useState<string>("");
   const [dslTab, setDslTab] = useState<"view" | "explain" | "edit">("view");
   const [dslError, setDslError] = useState<string | null>(null);
+  const [strategyText, setStrategyText] = useState<string>("");
+  const [aiBusy, setAiBusy] = useState(false);
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const range = `${backtestStartDate} - ${backtestEndDate}`;
   const activeTrade = useMemo(() => hoveredTrade ?? pinnedTrade, [hoveredTrade, pinnedTrade]);
   const divergences = report?.divergences || [];
-  const aiExplain = useMemo(() => buildDslExplanation(dslContent, locale), [dslContent, locale]);
+  const aiExplain = useMemo(() => buildDslReview(dslContent, strategyText, locale), [dslContent, strategyText, locale]);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +157,7 @@ export default function SimulationResult({
               className={`text-[11px] px-2 py-1 rounded ${dslTab === "explain" ? "bg-foreground text-primary-foreground" : "bg-muted text-foreground"}`}
               onClick={() => setDslTab("explain")}
             >
-              {locale === "zh" ? "AI 解读" : "AI Explain"}
+              {locale === "zh" ? "AI 解析&修改" : "AI Parse & Edit"}
             </button>
             <button
               className={`text-[11px] px-2 py-1 rounded ${dslTab === "edit" ? "bg-foreground text-primary-foreground" : "bg-muted text-foreground"}`}
@@ -173,10 +175,69 @@ export default function SimulationResult({
             </pre>
           )}
           {dslTab === "explain" && (
-            <div className="text-xs text-foreground space-y-2">
-              {aiExplain.map((line, idx) => (
-                <div key={idx} className="leading-relaxed">{line}</div>
-              ))}
+            <div className="text-xs text-foreground space-y-4">
+              <div>
+                <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "DSL 解读（结构化）" : "DSL Interpretation (Structured)"}</div>
+                <ul className="list-disc pl-4 space-y-1">
+                  {aiExplain.structure.map((line, idx) => (
+                    <li key={`s-${idx}`} className="leading-relaxed">{line}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "与“策略文字”的一致性检查" : "Consistency Check vs Strategy Text"}</div>
+                <ul className="list-disc pl-4 space-y-1">
+                  {aiExplain.consistency.map((line, idx) => (
+                    <li key={`c-${idx}`} className="leading-relaxed">{line}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "结论" : "Conclusion"}</div>
+                <div className="leading-relaxed">{aiExplain.conclusion}</div>
+              </div>
+              <div className="pt-2 border-t border-border/60 space-y-2">
+                <div className="font-semibold text-[11px]">{locale === "zh" ? "策略文字" : "Strategy Text"}</div>
+                <textarea
+                  value={strategyText}
+                  onChange={(e) => setStrategyText(e.target.value)}
+                  rows={4}
+                  placeholder={locale === "zh" ? "粘贴你想对齐的策略文字（例如：观察QQQ...）" : "Paste the target strategy text to align with DSL"}
+                  className="w-full text-[11px] leading-relaxed border border-border rounded-md p-2 bg-background"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    className="text-[11px] px-3 py-1.5 rounded bg-foreground text-primary-foreground disabled:opacity-60"
+                    disabled={aiBusy}
+                    onClick={async () => {
+                      if (!strategyText.trim()) {
+                        toast.error(locale === "zh" ? "请先输入策略文字" : "Please provide strategy text");
+                        return;
+                      }
+                      setAiBusy(true);
+                      try {
+                        const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY");
+                        const spec = res?.spec ?? null;
+                        if (!spec) throw new Error("empty spec");
+                        setDslContent(spec);
+                        setDslText(JSON.stringify(spec, null, 2));
+                        onDslOverrideChange(spec);
+                        toast.success(locale === "zh" ? "已生成并应用一致 DSL" : "Aligned DSL generated and applied");
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : "Failed to parse strategy";
+                        toast.error(locale === "zh" ? `生成失败：${msg}` : `Generate failed: ${msg}`);
+                      } finally {
+                        setAiBusy(false);
+                      }
+                    }}
+                  >
+                    {aiBusy ? (locale === "zh" ? "生成中..." : "Generating...") : (locale === "zh" ? "用 Vibe Coding 修正 DSL" : "Vibe Coding: Align DSL")}
+                  </button>
+                  <span className="text-[11px] text-muted-foreground">
+                    {locale === "zh" ? "将使用后端解析生成新 DSL，并应用到下一次回测" : "Uses backend parsing to generate a new DSL and applies it to the next run"}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
           {dslTab === "edit" && (
@@ -245,10 +306,15 @@ export default function SimulationResult({
   );
 }
 
-function buildDslExplanation(dslContent: any, locale: "en" | "zh"): string[] {
+function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "zh"): { structure: string[]; consistency: string[]; conclusion: string } {
   if (!dslContent || typeof dslContent !== "object") {
-    return [locale === "zh" ? "没有可解读的 DSL。" : "No DSL to explain."];
+    return {
+      structure: [locale === "zh" ? "没有可解读的 DSL。" : "No DSL to explain."],
+      consistency: [locale === "zh" ? "未提供 DSL，无法做一致性检查。" : "No DSL provided; consistency check unavailable."],
+      conclusion: locale === "zh" ? "请先生成并加载 DSL。" : "Please generate and load a DSL first.",
+    };
   }
+
   const spec = dslContent.dsl ? dslContent : dslContent;
   const universe = spec.universe || {};
   const signal = universe.signal_symbol || universe.signal || "N/A";
@@ -256,21 +322,109 @@ function buildDslExplanation(dslContent: any, locale: "en" | "zh"): string[] {
   const rules = spec.dsl?.logic?.rules || [];
   const events = spec.dsl?.signal?.events || [];
   const actions = spec.dsl?.action?.actions || [];
+  const indicators = spec.dsl?.signal?.indicators || [];
+  const tfs = Array.from(new Set(indicators.map((i: any) => i?.tf).filter(Boolean)));
 
-  const lines: string[] = [];
-  lines.push(locale === "zh"
+  const structure: string[] = [];
+  structure.push(locale === "zh"
     ? `观察标的：${signal}；交易标的：${trade}`
     : `Signal symbol: ${signal}; Trade symbol: ${trade}`);
-  lines.push(locale === "zh"
+  if (tfs.length > 0) {
+    structure.push(locale === "zh"
+      ? `指标周期：${tfs.join(", ")}`
+      : `Indicator timeframes: ${tfs.join(", ")}`);
+  }
+  structure.push(locale === "zh"
     ? `规则数量：${rules.length}，事件数量：${events.length}，动作数量：${actions.length}`
     : `Rules: ${rules.length}, Events: ${events.length}, Actions: ${actions.length}`);
   const stageRules = rules.map((r: any) => String(r.id || "rule"));
   if (stageRules.length > 0) {
-    lines.push(locale === "zh"
+    structure.push(locale === "zh"
       ? `规则列表：${stageRules.join(", ")}`
       : `Rule IDs: ${stageRules.join(", ")}`);
   }
-  return lines;
+  const actionFractions = actions
+    .map((a: any) => a?.qty?.mode === "FRACTION_OF_EQUITY" ? Number(a.qty.value) : null)
+    .filter((v: any) => typeof v === "number");
+  if (actionFractions.length > 0) {
+    const pct = actionFractions.map((v: number) => `${Math.round(v * 100)}%`).join(", ");
+    structure.push(locale === "zh" ? `分段仓位：${pct}` : `Stage sizes: ${pct}`);
+  }
+
+  const consistency: string[] = [];
+  const text = (strategyText || "").trim();
+  if (!text) {
+    consistency.push(locale === "zh" ? "未提供策略文字，无法检查一致性。" : "Strategy text not provided.");
+    return {
+      structure,
+      consistency,
+      conclusion: locale === "zh" ? "请补充策略文字后再检查一致性。" : "Provide strategy text for consistency check.",
+    };
+  }
+
+  const textLower = text.toLowerCase();
+  const mentionedIndicators = new Set<string>();
+  if (textLower.includes("kdj")) mentionedIndicators.add("KDJ");
+  if (textLower.includes("macd")) mentionedIndicators.add("MACD");
+  if (textLower.includes("rsi")) mentionedIndicators.add("RSI");
+  if (textLower.includes("boll") || text.includes("布林")) mentionedIndicators.add("BOLL");
+  if (textLower.includes("bias") || text.includes("乖离")) mentionedIndicators.add("BIAS");
+  if (/\bma\d+\b/i.test(textLower) || text.includes("均线") || text.includes("MA")) mentionedIndicators.add("MA");
+
+  const dslIndicators = new Set(indicators.map((i: any) => String(i?.type || "")));
+  for (const ind of mentionedIndicators) {
+    if (!dslIndicators.has(ind)) {
+      consistency.push(locale === "zh" ? `文字提到 ${ind}，DSL 中未找到对应指标。` : `Text mentions ${ind}, but DSL lacks it.`);
+    }
+  }
+
+  const tfMentioned =
+    text.includes("周线") || text.includes("周级") || textLower.includes("weekly") ? "1w" :
+    text.includes("日线") || text.includes("日级") || textLower.includes("daily") ? "1d" :
+    text.includes("4小时") || textLower.includes("4h") || text.includes("小时") ? "4h" :
+    text.includes("分钟") || textLower.includes("min") ? "1m" : null;
+  if (tfMentioned && tfs.length > 0 && !tfs.includes(tfMentioned)) {
+    consistency.push(locale === "zh"
+      ? `文字周期为 ${tfMentioned}，DSL 指标周期为 ${tfs.join(", ")}。`
+      : `Text timeframe ${tfMentioned} but DSL uses ${tfs.join(", ")}.`);
+  }
+
+  const textSymbols = new Set((text.match(/\b[A-Z]{2,6}\b/g) || []));
+  if (textSymbols.size > 0) {
+    if (textSymbols.has("QQQ") && signal !== "QQQ") {
+      consistency.push(locale === "zh" ? "文字提到观察 QQQ，但 DSL 观察标的不是 QQQ。" : "Text mentions QQQ as signal, but DSL signal differs.");
+    }
+    if (textSymbols.has("TQQQ") && trade !== "TQQQ") {
+      consistency.push(locale === "zh" ? "文字提到交易 TQQQ，但 DSL 交易标的不是 TQQQ。" : "Text mentions TQQQ as trade, but DSL trade differs.");
+    }
+  }
+
+  const pctMatches = Array.from(text.matchAll(/(\d+)\s*%/g)).map((m) => Number(m[1]));
+  if (pctMatches.length > 0 && actionFractions.length > 0) {
+    const dslPct = actionFractions.map((v: number) => Math.round(v * 100)).sort((a, b) => a - b);
+    const textPct = [...pctMatches].sort((a, b) => a - b);
+    if (dslPct.join(",") !== textPct.join(",")) {
+      consistency.push(locale === "zh"
+        ? `文字分仓为 ${textPct.join(", ")}%，DSL 分仓为 ${dslPct.join(", ")}%。`
+        : `Text stages ${textPct.join(", ")}%, DSL stages ${dslPct.join(", ")}%.`);
+    }
+  }
+
+  const hasLookback = rules.some((r: any) => JSON.stringify(r?.when || {}).includes("event_within"));
+  const textHasLookback = /过去|最近|近|within|last/i.test(text);
+  if (hasLookback && !textHasLookback) {
+    consistency.push(locale === "zh" ? "DSL 使用了“最近/过去 N 天”条件，但文字未明确说明。" : "DSL uses lookback windows, but text does not mention them.");
+  }
+
+  if (consistency.length === 0) {
+    consistency.push(locale === "zh" ? "未发现明显不一致。" : "No obvious inconsistencies found.");
+  }
+
+  const conclusion = consistency.some((l) => l.includes("未找到") || l.includes("不") || l.includes("but"))
+    ? (locale === "zh" ? "结论：当前 DSL 与策略文字不完全一致，建议使用下方按钮对齐。" : "Conclusion: DSL is not fully consistent with the text; consider aligning.")
+    : (locale === "zh" ? "结论：当前 DSL 与策略文字基本一致。" : "Conclusion: DSL is broadly consistent with the text.");
+
+  return { structure, consistency, conclusion };
 }
 
 function DivergenceSection({ divergences, locale }: { divergences: DivergenceSignal[]; locale: "en" | "zh" }) {
