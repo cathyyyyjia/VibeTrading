@@ -570,6 +570,19 @@ def _extract_ticker_candidates(nl_text: str) -> list[str]:
   return out
 
 
+def _extract_signal_trade_from_text(nl_text: str) -> tuple[str | None, str | None]:
+  # Heuristic: "观察/看 X" implies signal symbol, action verbs imply trade symbol.
+  signal = None
+  trade = None
+  for m in re.finditer(r"(观察|看)\s*([A-Za-z]{2,8})", nl_text, flags=re.IGNORECASE):
+    signal = m.group(2).upper()
+    break
+  for m in re.finditer(r"(建仓|买入|加仓|清仓|卖出|减仓)\s*([A-Za-z]{2,8})", nl_text, flags=re.IGNORECASE):
+    trade = m.group(2).upper()
+    break
+  return signal, trade
+
+
 def _extract_percent_values(nl_text: str) -> list[float]:
   vals: list[float] = []
   for m in re.findall(r"(\d{1,3})\s*%", nl_text):
@@ -612,11 +625,15 @@ def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator
 
   tickers = _extract_ticker_candidates(nl_text)
   text_upper = nl_text.upper()
+  signal_hint, trade_hint = _extract_signal_trade_from_text(nl_text)
   has_qqq = "QQQ" in text_upper
   has_tqqq = "TQQQ" in text_upper
   if has_qqq and has_tqqq:
     signal_symbol = "QQQ"
     trade_symbol = "TQQQ"
+  elif signal_hint or trade_hint:
+    signal_symbol = signal_hint or trade_hint or "QQQ"
+    trade_symbol = trade_hint or signal_hint or signal_symbol
   elif len(tickers) >= 2:
     signal_symbol = tickers[0]
     trade_symbol = tickers[1]

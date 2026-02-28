@@ -381,3 +381,17 @@ async def test_cn_staged_prompt_gets_deterministic_override(monkeypatch: pytest.
   action_ids = {a.get("id") for a in actions if isinstance(a, dict)}
   assert {"rule_stage1", "rule_stage2", "rule_stage3", "rule_exit"} <= rule_ids
   assert {"buy_stage1", "buy_stage2", "buy_stage3", "sell_all"} <= action_ids
+
+
+@pytest.mark.asyncio
+async def test_cn_staged_prompt_maps_signal_trade_from_observe_phrase(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def _fail_chat_json(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    raise AppError("INTERNAL", "LLM request failed", {"status": 502}, http_status=502)
+
+  monkeypatch.setattr(llm_client, "chat_json", _fail_chat_json)
+  spec = await nl_to_strategy_spec(
+    "观察QQQ，当QQQ周线级别KDJ金叉后建仓20%TQQQ，KDJ死叉且MACD死叉清仓TQQQ",
+    "BACKTEST_ONLY",
+    indicator_preferences={"indicatorKinds": ["MA", "MACD", "KDJ"]},
+  )
+  assert spec.get("universe") == {"signal_symbol": "QQQ", "trade_symbol": "TQQQ"}
