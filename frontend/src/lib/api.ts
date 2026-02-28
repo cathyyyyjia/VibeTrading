@@ -123,6 +123,15 @@ export async function parseStrategy(nl: string, mode: V0Mode = "BACKTEST_ONLY"):
   return res.json();
 }
 
+export async function reviewStrategy(dsl: Record<string, unknown>, strategyText: string): Promise<{ structure: string[]; consistency: string[]; conclusion: string; source: string }> {
+  const res = await apiFetch(`/api/strategies/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dsl, strategy_text: strategyText }),
+  }, { timeoutMs: 120000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to review strategy"));
+  return res.json();
+}
 export interface StepInfo {
   key: string;
   title: string;
@@ -564,3 +573,5 @@ export async function updateMyProfile(payload: { displayName: string | null }): 
   const data = (await res.json()) as V0UserProfileResponse;
   return mapUserProfile(data);
 }
+
+

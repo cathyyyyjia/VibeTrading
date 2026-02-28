@@ -10,7 +10,7 @@ import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
-import { getRunArtifact, parseStrategy } from '@/lib/api';
+import { getRunArtifact, parseStrategy, reviewStrategy } from '@/lib/api';
 import { toast } from 'sonner';
 import { useMemo, useState, useEffect } from 'react';
 
@@ -47,6 +47,9 @@ export default function SimulationResult({
   const [dslTab, setDslTab] = useState<"view" | "explain" | "edit">("view");
   const [dslError, setDslError] = useState<string | null>(null);
   const [strategyText, setStrategyText] = useState<string>("");
+  const [review, setReview] = useState<{ structure: string[]; consistency: string[]; conclusion: string; source: string } | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   useEffect(() => {
     if (!strategyText.trim() && prompt.trim()) {
       setStrategyText(prompt);
@@ -59,6 +62,9 @@ export default function SimulationResult({
   const activeTrade = useMemo(() => hoveredTrade ?? pinnedTrade, [hoveredTrade, pinnedTrade]);
   const divergences = report?.divergences || [];
   const aiExplain = useMemo(() => buildDslReview(dslContent, strategyText, locale), [dslContent, strategyText, locale]);
+  const viewStructure = review?.structure ?? aiExplain.structure;
+  const viewConsistency = review?.consistency ?? (reviewError ? [locale === "zh" ? "LLM 不可用，无法生成一致性检查。" : "LLM unavailable; consistency check skipped."] : aiExplain.consistency);
+  const viewConclusion = review?.conclusion ?? (reviewError ? (locale === "zh" ? "结论：LLM 不可用，暂无法判断一致性。" : "Conclusion: LLM unavailable; cannot determine consistency.") : aiExplain.conclusion);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +94,34 @@ export default function SimulationResult({
       cancelled = true;
     };
   }, [runId, artifacts?.dsl, status, locale]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!dslContent || !strategyText.trim()) {
+      setReview(null);
+      setReviewError(null);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      setReviewLoading(true);
+      try {
+        const res = await reviewStrategy(dslContent, strategyText.trim());
+        if (cancelled) return;
+        setReview(res);
+        setReviewError(null);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "Review failed";
+        setReviewError(msg);
+        setReview(null);
+      } finally {
+        if (!cancelled) setReviewLoading(false);
+      }
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [dslContent, strategyText]);
 
   const getTradeKey = (trade: TradeRecord | null) => {
     if (!trade) return "";
@@ -185,8 +219,10 @@ export default function SimulationResult({
             <div className="text-xs text-foreground space-y-4">
               <div>
                 <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "DSL 解读（结构化）" : "DSL Interpretation (Structured)"}</div>
+                {reviewLoading && <div className="text-[11px] text-muted-foreground">{locale === "zh" ? "AI 解析中..." : "AI reviewing..."}</div>}
+                {reviewError && <div className="text-[11px] text-red-500">{locale === "zh" ? `AI 解析失败：${reviewError}` : `AI review failed: ${reviewError}`}</div>}
                 <ul className="list-disc pl-4 space-y-1">
-                  {aiExplain.structure.map((line, idx) => (
+                  {viewStructure.map((line, idx) => (
                     <li key={`s-${idx}`} className="leading-relaxed">{line}</li>
                   ))}
                 </ul>
@@ -194,14 +230,14 @@ export default function SimulationResult({
               <div>
                 <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "与“策略文字”的一致性检查" : "Consistency Check vs Strategy Text"}</div>
                 <ul className="list-disc pl-4 space-y-1">
-                  {aiExplain.consistency.map((line, idx) => (
+                  {viewConsistency.map((line, idx) => (
                     <li key={`c-${idx}`} className="leading-relaxed">{line}</li>
                   ))}
                 </ul>
               </div>
               <div>
                 <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "结论" : "Conclusion"}</div>
-                <div className="leading-relaxed">{aiExplain.conclusion}</div>
+                <div className="leading-relaxed">{viewConclusion}</div>
               </div>
               <div className="pt-2 border-t border-border/60 space-y-2">
                 <div className="font-semibold text-[11px]">{locale === "zh" ? "策略文字" : "Strategy Text"}</div>
@@ -569,6 +605,15 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
 
 
 
