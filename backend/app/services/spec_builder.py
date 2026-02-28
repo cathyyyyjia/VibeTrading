@@ -611,9 +611,19 @@ def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator
     return False
 
   tickers = _extract_ticker_candidates(nl_text)
-  signal_symbol = tickers[0] if len(tickers) >= 1 else "QQQ"
-  trade_symbol = tickers[1] if len(tickers) >= 2 else signal_symbol
-  if "QQQ" in tickers and "TQQQ" in tickers:
+  text_upper = nl_text.upper()
+  has_qqq = "QQQ" in text_upper
+  has_tqqq = "TQQQ" in text_upper
+  if has_qqq and has_tqqq:
+    signal_symbol = "QQQ"
+    trade_symbol = "TQQQ"
+  elif len(tickers) >= 2:
+    signal_symbol = tickers[0]
+    trade_symbol = tickers[1]
+  elif len(tickers) == 1:
+    signal_symbol = tickers[0]
+    trade_symbol = tickers[0]
+  else:
     signal_symbol = "QQQ"
     trade_symbol = "TQQQ"
 
@@ -704,6 +714,9 @@ def _apply_cn_multi_stage_override(spec: dict[str, Any], nl_text: str, indicator
   meta = spec.get("meta")
   if isinstance(meta, dict):
     meta["deterministic_override"] = "cn_kdj_macd_ma_staged"
+    prefs_meta = meta.get("indicator_preferences")
+    if isinstance(prefs_meta, dict):
+      prefs_meta["maWindowDays"] = ma_days
   return True
 
 
