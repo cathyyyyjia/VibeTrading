@@ -170,7 +170,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
                   "params": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["fast", "slow", "signal", "period", "window", "bar_selection"],
+                    "required": ["fast", "slow", "signal", "period", "window", "bar_selection", "stddev_mult"],
                     "properties": {
                       "fast": {"type": ["integer", "null"]},
                       "slow": {"type": ["integer", "null"]},
@@ -190,7 +190,7 @@ STRATEGY_DRAFT_JSON_SCHEMA: dict[str, Any] = {
               "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "value", "tf"],
+                "required": ["id", "type", "a", "b", "left", "right", "direction", "op", "value", "tf", "pivot_left", "pivot_right", "lookback_bars"],
                 "properties": {
                   "id": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_:-]{0,63}$"},
                   "type": {"type": "string", "enum": ["CROSS", "CROSS_UP", "CROSS_DOWN", "THRESHOLD", "DIVERGENCE_BEARISH", "DIVERGENCE_BULLISH"]},
