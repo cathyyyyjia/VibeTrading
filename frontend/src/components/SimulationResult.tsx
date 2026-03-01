@@ -240,7 +240,7 @@ export default function SimulationResult({
                 <div className="font-semibold text-[11px] mb-1">{locale === "zh" ? "与“策略文字”的一致性检查" : "Consistency Check vs Strategy Text"}</div>
                 <ul className="list-disc pl-4 space-y-1">
                   {viewConsistency.map((line, idx) => (
-                    <li key={`c-${idx}`} className="leading-relaxed">{line}</li>
+                    <li key={`c-${idx}`} className="leading-relaxed">{locale === "zh" ? line.replace("[MISMATCH]", "不一致") : line}</li>
                   ))}
                 </ul>
               </div>
@@ -637,6 +637,8 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
+
 
 
 
