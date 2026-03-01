@@ -1336,9 +1336,8 @@ Output requirements:
       spec = _assemble_final_strategy_spec(draft=draft, nl_text=nl_text, mode=mode)
       if overrides and isinstance(overrides, dict):
         spec = _deep_merge(spec, overrides)
-      deterministic_applied = _apply_cn_multi_stage_override(spec, nl_text, indicator_preferences)
-      if not deterministic_applied:
-        _apply_indicator_preferences(spec, indicator_preferences)
+      # Preserve LLM semantic intent. Deterministic override is only applied in fallback mode.
+      _apply_indicator_preferences(spec, indicator_preferences)
       _normalize_cross_event_window_semantics(spec)
       _apply_divergence_preferences(spec, indicator_preferences)
       spec["strategy_version"] = "v0"
