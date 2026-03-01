@@ -56,6 +56,8 @@ export default function SimulationResult({
     }
   }, [prompt, strategyText]);
   const [aiBusy, setAiBusy] = useState(false);
+  const [vibeStatus, setVibeStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [vibeMessage, setVibeMessage] = useState<string | null>(null);
   const isLoading = status === 'running' || status === 'analyzing';
   const showResult = status === 'analyzing' || status === 'running' || status === 'completed' || status === 'failed';
   const range = `${backtestStartDate} - ${backtestEndDate}`;
@@ -211,9 +213,16 @@ export default function SimulationResult({
         <div className="p-3">
           {dslError && <div className="text-xs text-red-500">{dslError}</div>}
           {dslTab === "view" && (
-            <pre className="text-[11px] leading-relaxed bg-muted/40 p-3 rounded-md overflow-auto max-h-[280px]">
-              {dslText || (locale === "zh" ? "暂无 DSL" : "No DSL")}
-            </pre>
+            <div className="space-y-2">
+              {dslOverride && (
+                <div className="text-[11px] text-amber-600">
+                  {locale === "zh" ? "已应用 DSL 覆盖：下一次回测将使用该 DSL" : "DSL override active: next run will use this DSL"}
+                </div>
+              )}
+              <pre className="text-[11px] leading-relaxed bg-muted/40 p-3 rounded-md overflow-auto max-h-[280px]">
+                {dslText || (locale === "zh" ? "暂无 DSL" : "No DSL")}
+              </pre>
+            </div>
           )}
           {dslTab === "explain" && (
             <div className="text-xs text-foreground space-y-4">
@@ -257,6 +266,8 @@ export default function SimulationResult({
                         toast.error(locale === "zh" ? "请先输入策略文字" : "Please provide strategy text");
                         return;
                       }
+                      setVibeStatus("running");
+                      setVibeMessage(locale === "zh" ? "正在解析策略文字并生成 DSL..." : "Parsing strategy text and generating DSL...");
                       setAiBusy(true);
                       try {
                         const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY");
@@ -265,9 +276,14 @@ export default function SimulationResult({
                         setDslContent(spec);
                         setDslText(JSON.stringify(spec, null, 2));
                         onDslOverrideChange(spec);
+                        setDslTab("view");
+                        setVibeStatus("done");
+                        setVibeMessage(locale === "zh" ? "已生成新 DSL 并应用到下一次回测" : "New DSL generated and applied to next run");
                         toast.success(locale === "zh" ? "已生成并应用一致 DSL" : "Aligned DSL generated and applied");
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : "Failed to parse strategy";
+                        setVibeStatus("error");
+                        setVibeMessage(locale === "zh" ? `生成失败：${msg}` : `Generate failed: ${msg}`);
                         toast.error(locale === "zh" ? `生成失败：${msg}` : `Generate failed: ${msg}`);
                       } finally {
                         setAiBusy(false);
@@ -280,6 +296,22 @@ export default function SimulationResult({
                     {locale === "zh" ? "将使用后端解析生成新 DSL，并应用到下一次回测" : "Uses backend parsing to generate a new DSL and applies it to the next run"}
                   </span>
                 </div>
+                {vibeStatus !== "idle" && (
+                  <div className="text-[11px] mt-2">
+                    <span className={vibeStatus === "error" ? "text-red-500" : vibeStatus === "done" ? "text-emerald-600" : "text-muted-foreground"}>
+                      {vibeMessage}
+                    </span>
+                    {vibeStatus === "done" && (
+                      <button
+                        type="button"
+                        className="ml-3 text-[11px] px-2 py-1 rounded bg-muted text-foreground hover:bg-muted/70"
+                        onClick={() => setDslTab("view")}
+                      >
+                        {locale === "zh" ? "查看已修正 DSL" : "View updated DSL"}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
