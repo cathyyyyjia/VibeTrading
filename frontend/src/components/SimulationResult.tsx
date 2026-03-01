@@ -296,7 +296,7 @@ export default function SimulationResult({
                       setVibeMessage(locale === "zh" ? "正在解析策略文字并生成 DSL..." : "Parsing strategy text and generating DSL...");
                       setAiBusy(true);
                       try {
-                        const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY");
+                        const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY", true);
                         const spec = res?.spec ?? null;
                         if (!spec) throw new Error("empty spec");
                         const base = vibeBaseDsl ?? dslContent;
@@ -317,8 +317,11 @@ export default function SimulationResult({
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : "Failed to parse strategy";
                         setVibeStatus("error");
-                        setVibeMessage(locale === "zh" ? `生成失败：${msg}` : `Generate failed: ${msg}`);
-                        toast.error(locale === "zh" ? `生成失败：${msg}` : `Generate failed: ${msg}`);
+                        const hint = locale === "zh"
+                          ? "（LLM 未返回可用结果或未配置）"
+                          : "(LLM failed or not configured)";
+                        setVibeMessage(locale === "zh" ? `生成失败：${msg}${hint}` : `Generate failed: ${msg} ${hint}`);
+                        toast.error(locale === "zh" ? `生成失败：${msg}${hint}` : `Generate failed: ${msg} ${hint}`);
                       } finally {
                         setAiBusy(false);
                       }

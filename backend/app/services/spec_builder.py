@@ -1291,6 +1291,7 @@ async def nl_to_strategy_spec(
   mode: Literal["BACKTEST_ONLY", "PAPER", "LIVE"],
   overrides: dict[str, Any] | None = None,
   indicator_preferences: dict[str, Any] | None = None,
+  strict_llm: bool = False,
 ) -> dict[str, Any]:
   if not isinstance(nl_text, str) or not nl_text.strip():
     raise AppError("VALIDATION_ERROR", "nl_text must be a non-empty string", {})
@@ -1356,6 +1357,8 @@ Output requirements:
         break
 
   if last_error is not None:
+    if strict_llm:
+      raise last_error
     guard_triggered = _requires_precise_llm_parsing(nl_text, indicator_preferences)
     fallback = _build_fallback_strategy_spec(
       nl_text=nl_text,

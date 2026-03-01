@@ -21,6 +21,7 @@ from app.services.user_service import ensure_user_from_claims
 class ParseRequest(BaseModel):
   nl: str = Field(min_length=1)
   mode: str = "BACKTEST_ONLY"
+  force_llm: bool = False
 
 
 class ReviewRequest(BaseModel):
@@ -99,7 +100,7 @@ async def review_strategy(req: ReviewRequest) -> ReviewResponse:
 
 @router.post("/parse")
 async def parse_strategy(req: ParseRequest) -> dict:
-  spec = await nl_to_strategy_spec(req.nl, req.mode)  # type: ignore[arg-type]
+  spec = await nl_to_strategy_spec(req.nl, req.mode, strict_llm=req.force_llm)  # type: ignore[arg-type]
   return {"spec": spec}
 
 
