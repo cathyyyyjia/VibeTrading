@@ -20,6 +20,7 @@ interface SimulationResultProps {
   runId: string | null;
   prompt: string;
   artifacts: { dsl: string; reportUrl: string; tradesCsvUrl: string } | null;
+  onRunBacktest: () => void;
   indicatorPreferences: IndicatorPreferences;
   backtestStartDate: string;
   backtestEndDate: string;
@@ -33,6 +34,7 @@ export default function SimulationResult({
   runId,
   prompt,
   artifacts,
+  onRunBacktest,
   indicatorPreferences,
   backtestStartDate,
   backtestEndDate,
@@ -50,6 +52,8 @@ export default function SimulationResult({
   const [review, setReview] = useState<{ structure: string[]; consistency: string[]; conclusion: string; source: string } | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [vibeChanges, setVibeChanges] = useState<string[]>([]);
+  const [vibeBaseDsl, setVibeBaseDsl] = useState<any | null>(null);
   useEffect(() => {
     if (!strategyText.trim() && prompt.trim()) {
       setStrategyText(prompt);
@@ -86,6 +90,7 @@ export default function SimulationResult({
         const content = res?.content ?? null;
         setDslContent(content);
         setDslText(content ? JSON.stringify(content, null, 2) : "");
+        setVibeBaseDsl(content);
         setDslError(null);
       } catch {
         if (!cancelled) setDslError(locale === "zh" ? "DSL 获取失败" : "Failed to load DSL");
@@ -215,8 +220,29 @@ export default function SimulationResult({
           {dslTab === "view" && (
             <div className="space-y-2">
               {dslOverride && (
-                <div className="text-[11px] text-amber-600">
-                  {locale === "zh" ? "已应用 DSL 覆盖：下一次回测将使用该 DSL" : "DSL override active: next run will use this DSL"}
+                <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-700">
+                  <div className="font-semibold">
+                    {locale === "zh" ? "Vibe Coding 已生成新 DSL" : "Vibe Coding generated a new DSL"}
+                  </div>
+                  {vibeChanges.length > 0 && (
+                    <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                      {vibeChanges.map((c, idx) => (
+                        <li key={`chg-${idx}`}>{c}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-[11px] px-2.5 py-1 rounded bg-foreground text-primary-foreground"
+                      onClick={onRunBacktest}
+                    >
+                      {locale === "zh" ? "立即再次回测" : "Run backtest now"}
+                    </button>
+                    <span className="text-[11px] text-amber-700/80">
+                      {locale === "zh" ? "点击后将使用新 DSL" : "Uses the updated DSL"}
+                    </span>
+                  </div>
                 </div>
               )}
               <pre className="text-[11px] leading-relaxed bg-muted/40 p-3 rounded-md overflow-auto max-h-[280px]">
@@ -273,6 +299,8 @@ export default function SimulationResult({
                         const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY");
                         const spec = res?.spec ?? null;
                         if (!spec) throw new Error("empty spec");
+                        const base = vibeBaseDsl ?? dslContent;
+                        setVibeChanges(buildDslChangeSummary(base, spec, locale));
                         setDslContent(spec);
                         setDslText(JSON.stringify(spec, null, 2));
                         onDslOverrideChange(spec);
@@ -594,6 +622,55 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
     : (locale === "zh" ? "结论：当前 DSL 与策略文字基本一致。" : "Conclusion: DSL is broadly consistent with the text.");
 
   return { structure, consistency, conclusion };
+}
+
+function buildDslChangeSummary(base: any, next: any, locale: "en" | "zh"): string[] {
+  const lines: string[] = [];
+  if (!base || !next) return lines;
+
+  const baseUniverse = base.universe || {};
+  const nextUniverse = next.universe || {};
+  if (baseUniverse.signal_symbol !== nextUniverse.signal_symbol || baseUniverse.trade_symbol !== nextUniverse.trade_symbol) {
+    lines.push(locale === "zh"
+      ? `标的变更：${baseUniverse.signal_symbol || "N/A"}/${baseUniverse.trade_symbol || "N/A"} → ${nextUniverse.signal_symbol || "N/A"}/${nextUniverse.trade_symbol || "N/A"}`
+      : `Symbols: ${baseUniverse.signal_symbol || "N/A"}/${baseUniverse.trade_symbol || "N/A"} → ${nextUniverse.signal_symbol || "N/A"}/${nextUniverse.trade_symbol || "N/A"}`);
+  }
+
+  const baseIndicators = (base.dsl?.signal?.indicators || []).map((i: any) => `${i.type}(${i.tf})`).join(", ");
+  const nextIndicators = (next.dsl?.signal?.indicators || []).map((i: any) => `${i.type}(${i.tf})`).join(", ");
+  if (baseIndicators !== nextIndicators) {
+    lines.push(locale === "zh"
+      ? `指标/周期变更：${baseIndicators || "无"} → ${nextIndicators || "无"}`
+      : `Indicators/timeframes: ${baseIndicators || "none"} → ${nextIndicators || "none"}`);
+  }
+
+  const baseRules = (base.dsl?.logic?.rules || []).length;
+  const nextRules = (next.dsl?.logic?.rules || []).length;
+  if (baseRules !== nextRules) {
+    lines.push(locale === "zh" ? `规则数量：${baseRules} → ${nextRules}` : `Rules: ${baseRules} → ${nextRules}`);
+  }
+
+  const baseStages = (base.dsl?.action?.actions || []).map((a: any) => a?.qty?.value).filter((v: any) => typeof v === "number");
+  const nextStages = (next.dsl?.action?.actions || []).map((a: any) => a?.qty?.value).filter((v: any) => typeof v === "number");
+  if (baseStages.join(",") !== nextStages.join(",")) {
+    lines.push(locale === "zh"
+      ? `分段仓位：${baseStages.map((v: number) => `${Math.round(v * 100)}%`).join(", ") || "无"} → ${nextStages.map((v: number) => `${Math.round(v * 100)}%`).join(", ") || "无"}`
+      : `Stage sizes: ${baseStages.map((v: number) => `${Math.round(v * 100)}%`).join(", ") || "none"} → ${nextStages.map((v: number) => `${Math.round(v * 100)}%`).join(", ") || "none"}`);
+  }
+
+  const baseLookback = JSON.stringify(base.dsl?.logic || {}).includes("event_within");
+  const nextLookback = JSON.stringify(next.dsl?.logic || {}).includes("event_within");
+  if (baseLookback !== nextLookback) {
+    lines.push(locale === "zh"
+      ? `事件回溯条件：${baseLookback ? "有" : "无"} → ${nextLookback ? "有" : "无"}`
+      : `Lookback rules: ${baseLookback ? "yes" : "no"} → ${nextLookback ? "yes" : "no"}`);
+  }
+
+  if (lines.length === 0) {
+    lines.push(locale === "zh" ? "未检测到明显结构变更" : "No major structural changes detected");
+  }
+
+  return lines;
 }
 
 function DivergenceSection({ divergences, locale }: { divergences: DivergenceSignal[]; locale: "en" | "zh" }) {

@@ -92,6 +92,7 @@ export default function StrategyDesigner({
         runId={runId}
         prompt={prompt}
         artifacts={artifacts}
+        onRunBacktest={onRunBacktest}
         indicatorPreferences={indicatorPreferences}
         backtestStartDate={backtestStartDate}
         backtestEndDate={backtestEndDate}
