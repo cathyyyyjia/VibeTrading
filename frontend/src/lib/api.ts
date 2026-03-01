@@ -23,10 +23,24 @@ async function parseApiErrorMessage(res: Response, fallback: string): Promise<st
     if (body && typeof body === "object") {
       const code = typeof (body as any).code === "string" ? (body as any).code : "";
       const message = typeof (body as any).message === "string" ? (body as any).message : "";
+      const details = (body as any).details && typeof (body as any).details === "object" ? (body as any).details : null;
       if (code === "CONFIG_ERROR") {
         const hint = "Check backend LLM_API_KEY/OPENAI_API_KEY and retry.";
         if (message) return `${message} ${hint}`;
         return `${code}: ${hint}`;
+      }
+      if (code === "INTERNAL" && message && details) {
+        const status = typeof (details as any).status === "number" ? (details as any).status : null;
+        const err = typeof (details as any).error === "string" ? (details as any).error : "";
+        const bodyText = typeof (details as any).body === "string" ? (details as any).body : "";
+        const nested =
+          (details as any).second_error?.message ||
+          (details as any).first_error?.message ||
+          "";
+        const suffix = [status ? `status=${status}` : "", err, nested, bodyText ? bodyText.slice(0, 220) : ""]
+          .filter(Boolean)
+          .join(" | ");
+        return suffix ? `${message} (${suffix})` : message;
       }
       if (code && message) return `${code}: ${message}`;
       if (message) return message;

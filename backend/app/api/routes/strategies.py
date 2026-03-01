@@ -53,6 +53,34 @@ class RepairResponse(BaseModel):
 router = APIRouter()
 
 
+def _compact_review_for_repair(review: ReviewResponse, locale: str) -> dict[str, Any]:
+  def _trim_lines(lines: list[str], max_lines: int, max_len: int) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+      s = str(line).strip()
+      if not s:
+        continue
+      if len(s) > max_len:
+        s = s[: max_len - 1] + "…"
+      out.append(s)
+      if len(out) >= max_lines:
+        break
+    return out
+
+  consistency_all = [str(x) for x in review.consistency]
+  mismatch_tokens = ["[MISMATCH]", "不一致", "NOT consistent", "not consistent", "mismatch"]
+  mismatch_lines = [line for line in consistency_all if any(tok in line for tok in mismatch_tokens)]
+  if not mismatch_lines:
+    mismatch_lines = consistency_all
+
+  return {
+    "locale": locale,
+    "structure": _trim_lines([str(x) for x in review.structure], max_lines=8, max_len=280),
+    "consistency_focus": _trim_lines(mismatch_lines, max_lines=12, max_len=320),
+    "conclusion": str(review.conclusion)[:300],
+  }
+
+
 @router.post("/review", response_model=ReviewResponse)
 async def review_strategy(req: ReviewRequest) -> ReviewResponse:
   if not llm_client.is_configured:
@@ -130,11 +158,12 @@ async def repair_strategy(req: RepairRequest) -> RepairResponse:
     "The changes list must be in the requested locale language."
   )
 
+  compact_review = _compact_review_for_repair(req.review, req.locale)
   user_prompt = (
     "Locale: " + req.locale + "\n"
     "Strategy text (target requirement):\n" + req.strategy_text + "\n\n"
-    "Review findings (structured + consistency + conclusion):\n" + json.dumps(req.review.model_dump(), ensure_ascii=False) + "\n\n"
-    "Current DSL JSON:\n" + json.dumps(req.dsl, ensure_ascii=False)
+    "Review findings (focus on mismatches):\n" + json.dumps(compact_review, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+    "Current DSL JSON:\n" + json.dumps(req.dsl, ensure_ascii=False, separators=(",", ":"))
   )
 
   schema = {
@@ -147,18 +176,45 @@ async def repair_strategy(req: RepairRequest) -> RepairResponse:
     },
   }
 
-  data = await llm_client.chat_json(
-    system_prompt,
-    user_prompt,
-    schema_name="dsl_repair",
-    json_schema=schema,
-    strict_schema=True,
-  )
+  try:
+    data = await llm_client.chat_json(
+      system_prompt,
+      user_prompt,
+      schema_name="dsl_repair",
+      json_schema=schema,
+      strict_schema=True,
+    )
+  except AppError as first_err:
+    compact_prompt = (
+      "Locale: " + req.locale + "\n"
+      "Only fix items listed below and return full corrected spec + changes.\n"
+      "Mismatch checklist:\n" + json.dumps(compact_review.get("consistency_focus", []), ensure_ascii=False, separators=(",", ":")) + "\n\n"
+      "Strategy text:\n" + req.strategy_text + "\n\n"
+      "DSL JSON:\n" + json.dumps(req.dsl, ensure_ascii=False, separators=(",", ":"))
+    )
+    try:
+      data = await llm_client.chat_json(
+        system_prompt,
+        compact_prompt,
+        schema_name="dsl_repair_compact",
+        json_schema=schema,
+        strict_schema=True,
+      )
+    except AppError as second_err:
+      raise AppError(
+        "INTERNAL",
+        "LLM repair failed",
+        {
+          "first_error": {"code": first_err.code, "message": first_err.message, "details": first_err.details},
+          "second_error": {"code": second_err.code, "message": second_err.message, "details": second_err.details},
+        },
+        http_status=502,
+      )
 
   spec = data.get("spec") if isinstance(data, dict) else None
   changes = data.get("changes") if isinstance(data, dict) else None
   if not isinstance(spec, dict):
-    raise AppError("LLM_ERROR", "LLM returned invalid DSL spec", {"type": str(type(spec))})
+    raise AppError("VALIDATION_ERROR", "LLM returned invalid DSL spec", {"type": str(type(spec))}, http_status=400)
 
   return RepairResponse(
     spec=spec,
