@@ -172,12 +172,14 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
   if not runs:
     return RunHistoryResponse(history=[])
 
-  strategy_ids = {r.strategy_id for r in runs}
+  strategy_ids = {r.strategy_id for r in runs if r.strategy_id is not None}
   run_ids = {r.id for r in runs}
-  strategies = (
-    await db.execute(select(Strategy).where(Strategy.id.in_(strategy_ids)))
-  ).scalars().all()
-  strategy_by_id = {s.id: s for s in strategies}
+  strategy_by_id: dict[uuid.UUID, Strategy] = {}
+  if strategy_ids:
+    strategies = (
+      await db.execute(select(Strategy).where(Strategy.id.in_(strategy_ids)))
+    ).scalars().all()
+    strategy_by_id = {s.id: s for s in strategies}
 
   artifact_rows = (
     await db.execute(
@@ -203,7 +205,10 @@ async def get_history(db: AsyncSession = Depends(get_db), claims: tuple[str, dic
 
     resolved_content: dict[str, Any] | None = content if isinstance(content, dict) else None
     if resolved_content is None and isinstance(uri, str) and parse_storage_uri(uri) is not None:
-      resolved_content = await download_json(uri)
+      try:
+        resolved_content = await download_json(uri)
+      except Exception:
+        resolved_content = None
     if not isinstance(resolved_content, dict):
       continue
 
