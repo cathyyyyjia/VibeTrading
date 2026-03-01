@@ -104,7 +104,7 @@ export default function SimulationResult({
     const handle = setTimeout(async () => {
       setReviewLoading(true);
       try {
-        const res = await reviewStrategy(dslContent, strategyText.trim());
+        const res = await reviewStrategy(dslContent, strategyText.trim(), locale);
         if (cancelled) return;
         setReview(res);
         setReviewError(null);
@@ -605,6 +605,7 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
 
 
 

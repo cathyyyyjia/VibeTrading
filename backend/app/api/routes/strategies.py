@@ -26,6 +26,7 @@ class ParseRequest(BaseModel):
 class ReviewRequest(BaseModel):
   dsl: dict
   strategy_text: str = Field(min_length=1)
+  locale: str = "zh"
 
 
 class ReviewResponse(BaseModel):
@@ -47,10 +48,12 @@ async def review_strategy(req: ReviewRequest) -> ReviewResponse:
     "You are a strict DSL verifier for trading strategies. "
     "Compare the strategy text with the DSL and output structured findings. "
     "Be strict about timeframe, symbol, indicators, entry/exit conditions, and lookback windows. "
-    "If any mismatch exists, mark it with [MISMATCH] and set conclusion to NOT consistent."
+    "If any mismatch exists, mark it with [MISMATCH] and set conclusion to NOT consistent. "
+    "The output language must match the requested locale exactly (zh for Chinese, en for English)."
   )
 
   user_prompt = (
+    "Locale: " + req.locale + "\n"
     "Strategy text (original requirement):\n" + req.strategy_text + "\n\n"
     "DSL JSON:\n" + json.dumps(req.dsl, ensure_ascii=False)
   )
@@ -163,3 +166,5 @@ async def delete_strategy(
   await db.delete(strategy)
   await db.commit()
   return Response(status_code=204)
+
+
