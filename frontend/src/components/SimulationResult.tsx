@@ -300,7 +300,13 @@ export default function SimulationResult({
                         const spec = res?.spec ?? null;
                         if (!spec) throw new Error("empty spec");
                         const base = vibeBaseDsl ?? dslContent;
-                        setVibeChanges(buildDslChangeSummary(base, spec, locale));
+                        const changeSummary = buildDslChangeSummary(base, spec, locale);
+                        setVibeChanges(changeSummary.changes);
+                        if (!changeSummary.changed) {
+                          setVibeStatus("error");
+                          setVibeMessage(locale === "zh" ? "未生成不同的 DSL（可能解析未调整或回退），请修改策略文字后再试" : "No DSL changes generated. Adjust the strategy text and try again.");
+                          return;
+                        }
                         setDslContent(spec);
                         setDslText(JSON.stringify(spec, null, 2));
                         onDslOverrideChange(spec);
@@ -624,9 +630,9 @@ function buildDslReview(dslContent: any, strategyText: string, locale: "en" | "z
   return { structure, consistency, conclusion };
 }
 
-function buildDslChangeSummary(base: any, next: any, locale: "en" | "zh"): string[] {
+function buildDslChangeSummary(base: any, next: any, locale: "en" | "zh"): { changes: string[]; changed: boolean } {
   const lines: string[] = [];
-  if (!base || !next) return lines;
+  if (!base || !next) return { changes: lines, changed: lines.length > 0 && !lines.includes(locale === "zh" ? "未检测到明显结构变更" : "No major structural changes detected") };
 
   const baseUniverse = base.universe || {};
   const nextUniverse = next.universe || {};
@@ -670,7 +676,7 @@ function buildDslChangeSummary(base: any, next: any, locale: "en" | "zh"): strin
     lines.push(locale === "zh" ? "未检测到明显结构变更" : "No major structural changes detected");
   }
 
-  return lines;
+  return { changes: lines, changed: lines.length > 0 && !lines.includes(locale === "zh" ? "未检测到明显结构变更" : "No major structural changes detected") };
 }
 
 function DivergenceSection({ divergences, locale }: { divergences: DivergenceSignal[]; locale: "en" | "zh" }) {
@@ -714,6 +720,7 @@ function DivergenceSection({ divergences, locale }: { divergences: DivergenceSig
     </div>
   );
 }
+
 
 
 
