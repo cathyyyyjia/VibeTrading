@@ -118,7 +118,7 @@ export async function parseStrategy(nl: string, mode: V0Mode = "BACKTEST_ONLY", 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nl, mode, force_llm: forceLlm }),
-  }, { timeoutMs: 120000 });
+  }, { timeoutMs: 240000 });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to parse strategy"));
   return res.json();
 }
@@ -128,7 +128,7 @@ export async function reviewStrategy(dsl: Record<string, unknown>, strategyText:
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dsl, strategy_text: strategyText, locale }),
-  }, { timeoutMs: 120000 });
+  }, { timeoutMs: 240000 });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to review strategy"));
   return res.json();
 }

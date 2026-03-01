@@ -32,7 +32,7 @@ class Settings(BaseSettings):
   llm_base_url: AnyHttpUrl = "https://api.openai.com/v1"
   llm_api_key: str | None = Field(default=None, validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"))
   llm_model: str = "gpt-5-mini"
-  llm_request_timeout_seconds: int = 120
+  llm_request_timeout_seconds: int = 240
   llm_max_retries: int = 2
   llm_retry_backoff_seconds: float = 1.0
   llm_semantic_repair_attempts: int = 1
