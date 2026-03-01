@@ -10,7 +10,7 @@ import HistoryPanel from './HistoryPanel';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
 import type { BacktestWindowPreset } from '@/lib/date';
-import type { IndicatorPreferences, RunReportResponse } from '@/lib/api';
+import type { IndicatorPreferences, RunReportResponse, StepInfo } from '@/lib/api';
 
 interface StrategyDesignerProps {
   status: AppStatus;
@@ -22,6 +22,7 @@ interface StrategyDesignerProps {
   onIndicatorPreferencesChange: (next: IndicatorPreferences) => void;
   dslOverride: Record<string, unknown> | null;
   onDslOverrideChange: (next: Record<string, unknown> | null) => void;
+  onVibeWorkflowUpdate?: (steps: StepInfo[]) => void;
   backtestWindowPreset: BacktestWindowPreset;
   backtestStartDate: string;
   backtestEndDate: string;
@@ -43,6 +44,7 @@ export default function StrategyDesigner({
   onIndicatorPreferencesChange,
   dslOverride,
   onDslOverrideChange,
+  onVibeWorkflowUpdate,
   backtestWindowPreset,
   backtestStartDate,
   backtestEndDate,
@@ -98,6 +100,7 @@ export default function StrategyDesigner({
         backtestEndDate={backtestEndDate}
         dslOverride={dslOverride}
         onDslOverrideChange={onDslOverrideChange}
+        onVibeWorkflowUpdate={onVibeWorkflowUpdate}
       />
 
       {/* History Panel */}

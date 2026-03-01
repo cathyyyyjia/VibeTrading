@@ -11,6 +11,7 @@ import AIWorkspace from '@/components/AIWorkspace';
 import BottomBar from '@/components/BottomBar';
 import DeployModal from '@/components/DeployModal';
 import { useBacktest } from '@/hooks/useBacktest';
+import type { StepInfo } from '@/lib/api';
 
 export default function Home() {
   const {
@@ -41,6 +42,7 @@ export default function Home() {
   } = useBacktest();
 
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+  const [vibeWorkflowSteps, setVibeWorkflowSteps] = useState<StepInfo[]>([]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
@@ -61,6 +63,7 @@ export default function Home() {
               onIndicatorPreferencesChange={setIndicatorPreferences}
               dslOverride={dslOverride}
               onDslOverrideChange={setDslOverride}
+              onVibeWorkflowUpdate={setVibeWorkflowSteps}
               backtestWindowPreset={backtestWindowPreset}
               backtestStartDate={backtestStartDate}
               backtestEndDate={backtestEndDate}
@@ -90,6 +93,7 @@ export default function Home() {
             progress={progress}
             artifacts={artifacts}
             activeRunWindow={activeRunWindow}
+            extraSteps={vibeWorkflowSteps}
           />
         </div>
       </div>

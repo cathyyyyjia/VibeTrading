@@ -132,6 +132,21 @@ export async function reviewStrategy(dsl: Record<string, unknown>, strategyText:
   if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to review strategy"));
   return res.json();
 }
+
+export async function repairStrategy(
+  dsl: Record<string, unknown>,
+  strategyText: string,
+  review: { structure: string[]; consistency: string[]; conclusion: string; source?: string },
+  locale: "zh" | "en"
+): Promise<{ spec: any; changes: string[]; source: string }> {
+  const res = await apiFetch(`/api/strategies/repair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dsl, strategy_text: strategyText, review, locale }),
+  }, { timeoutMs: 240000 });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res, "Failed to repair DSL"));
+  return res.json();
+}
 export interface StepInfo {
   key: string;
   title: string;

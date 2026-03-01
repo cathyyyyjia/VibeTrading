@@ -9,8 +9,8 @@ import EquityChart from './EquityChart';
 import TradeTable from './TradeTable';
 import { useI18n } from '@/contexts/I18nContext';
 import type { AppStatus } from '@/hooks/useBacktest';
-import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, TradeRecord } from '@/lib/api';
-import { getRunArtifact, parseStrategy, reviewStrategy } from '@/lib/api';
+import type { DivergenceSignal, IndicatorPreferences, RunReportResponse, StepInfo, TradeRecord } from '@/lib/api';
+import { getRunArtifact, repairStrategy, reviewStrategy } from '@/lib/api';
 import { toast } from 'sonner';
 import { useMemo, useState, useEffect } from 'react';
 
@@ -26,6 +26,7 @@ interface SimulationResultProps {
   backtestEndDate: string;
   dslOverride: Record<string, unknown> | null;
   onDslOverrideChange: (next: Record<string, unknown> | null) => void;
+  onVibeWorkflowUpdate?: (steps: StepInfo[]) => void;
 }
 
 export default function SimulationResult({
@@ -40,6 +41,7 @@ export default function SimulationResult({
   backtestEndDate,
   dslOverride,
   onDslOverrideChange,
+  onVibeWorkflowUpdate,
 }: SimulationResultProps) {
   const { t, locale } = useI18n();
   const [hoveredTrade, setHoveredTrade] = useState<TradeRecord | null>(null);
@@ -71,6 +73,14 @@ export default function SimulationResult({
   const viewStructure = review?.structure ?? aiExplain.structure;
   const viewConsistency = review?.consistency ?? (reviewError ? [locale === "zh" ? "LLM 不可用，无法生成一致性检查。" : "LLM unavailable; consistency check skipped."] : aiExplain.consistency);
   const viewConclusion = review?.conclusion ?? (reviewError ? (locale === "zh" ? "结论：LLM 不可用，暂无法判断一致性。" : "Conclusion: LLM unavailable; cannot determine consistency.") : aiExplain.conclusion);
+
+  const updateVibeWorkflow = (status: StepInfo["status"], logs: string[]) => {
+    if (!onVibeWorkflowUpdate) return;
+    const title = locale === "zh" ? "Vibe Coding 修正" : "Vibe Coding Fix";
+    onVibeWorkflowUpdate([
+      { key: "vibe_fix", title, status, durationMs: null, logs },
+    ]);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -292,27 +302,47 @@ export default function SimulationResult({
                         toast.error(locale === "zh" ? "请先输入策略文字" : "Please provide strategy text");
                         return;
                       }
+                      if (!dslContent) {
+                        toast.error(locale === "zh" ? "DSL 暂不可用" : "DSL not available");
+                        return;
+                      }
                       setVibeStatus("running");
-                      setVibeMessage(locale === "zh" ? "正在解析策略文字并生成 DSL..." : "Parsing strategy text and generating DSL...");
+                      setVibeMessage(locale === "zh" ? "正在基于一致性检查修正 DSL..." : "Repairing DSL based on consistency check...");
+                      const logs: string[] = [];
+                      const pushLog = (line: string, status: StepInfo["status"] = "running") => {
+                        logs.push(line);
+                        updateVibeWorkflow(status, [...logs]);
+                      };
                       setAiBusy(true);
                       try {
-                        const res = await parseStrategy(strategyText.trim(), "BACKTEST_ONLY", true);
+                        pushLog(locale === "zh" ? "读取 DSL 解读与一致性检查" : "Load DSL interpretation & consistency check");
+                        let reviewPayload = review;
+                        if (!reviewPayload) {
+                          reviewPayload = await reviewStrategy(dslContent, strategyText.trim(), locale);
+                          setReview(reviewPayload);
+                          setReviewError(null);
+                        }
+                        pushLog(locale === "zh" ? "开始生成修正 DSL" : "Generate corrected DSL");
+
+                        const res = await repairStrategy(dslContent, strategyText.trim(), reviewPayload!, locale);
                         const spec = res?.spec ?? null;
                         if (!spec) throw new Error("empty spec");
-                        const base = vibeBaseDsl ?? dslContent;
-                        const changeSummary = buildDslChangeSummary(base, spec, locale);
-                        setVibeChanges(changeSummary.changes);
-                        if (!changeSummary.changed) {
+                        const changes = Array.isArray(res?.changes) ? res.changes : [];
+                        setVibeChanges(changes);
+                        if (!changes.length) {
                           setVibeStatus("error");
-                          setVibeMessage(locale === "zh" ? "未生成不同的 DSL（可能解析未调整或回退），请修改策略文字后再试" : "No DSL changes generated. Adjust the strategy text and try again.");
+                          setVibeMessage(locale === "zh" ? "未生成可用的修正项，请调整策略文字后再试" : "No actionable fixes returned. Adjust the strategy text and try again.");
+                          pushLog(locale === "zh" ? "未检测到可应用的修正" : "No actionable fixes detected", "error");
                           return;
                         }
+                        pushLog(locale === "zh" ? `修正部分：${changes.join("；")}` : `Fixed sections: ${changes.join("; ")}`);
                         setDslContent(spec);
                         setDslText(JSON.stringify(spec, null, 2));
                         onDslOverrideChange(spec);
                         setDslTab("view");
                         setVibeStatus("done");
                         setVibeMessage(locale === "zh" ? "已生成新 DSL 并应用到下一次回测" : "New DSL generated and applied to next run");
+                        pushLog(locale === "zh" ? "修正完成" : "Repair completed", "done");
                         toast.success(locale === "zh" ? "已生成并应用一致 DSL" : "Aligned DSL generated and applied");
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : "Failed to parse strategy";
@@ -322,6 +352,7 @@ export default function SimulationResult({
                           : "(LLM failed or not configured)";
                         setVibeMessage(locale === "zh" ? `生成失败：${msg}${hint}` : `Generate failed: ${msg} ${hint}`);
                         toast.error(locale === "zh" ? `生成失败：${msg}${hint}` : `Generate failed: ${msg} ${hint}`);
+                        pushLog(locale === "zh" ? `修正失败：${msg}` : `Repair failed: ${msg}`, "error");
                       } finally {
                         setAiBusy(false);
                       }
@@ -330,7 +361,9 @@ export default function SimulationResult({
                     {aiBusy ? (locale === "zh" ? "生成中..." : "Generating...") : (locale === "zh" ? "用 Vibe Coding 修正 DSL" : "Vibe Coding: Align DSL")}
                   </button>
                   <span className="text-[11px] text-muted-foreground">
-                    {locale === "zh" ? "将使用后端解析生成新 DSL，并应用到下一次回测" : "Uses backend parsing to generate a new DSL and applies it to the next run"}
+                    {locale === "zh"
+                      ? "将根据 DSL 解读与一致性检查修正 DSL，并应用到下一次回测"
+                      : "Repairs DSL using interpretation + consistency check, then applies to next run"}
                   </span>
                 </div>
                 {vibeStatus !== "idle" && (

@@ -37,6 +37,19 @@ class ReviewResponse(BaseModel):
   source: str = "llm"
 
 
+class RepairRequest(BaseModel):
+  dsl: dict
+  strategy_text: str = Field(min_length=1)
+  review: ReviewResponse
+  locale: str = "zh"
+
+
+class RepairResponse(BaseModel):
+  spec: dict
+  changes: list[str]
+  source: str = "llm"
+
+
 router = APIRouter()
 
 
@@ -102,6 +115,56 @@ async def review_strategy(req: ReviewRequest) -> ReviewResponse:
 async def parse_strategy(req: ParseRequest) -> dict:
   spec = await nl_to_strategy_spec(req.nl, req.mode, strict_llm=req.force_llm)  # type: ignore[arg-type]
   return {"spec": spec}
+
+
+@router.post("/repair", response_model=RepairResponse)
+async def repair_strategy(req: RepairRequest) -> RepairResponse:
+  if not llm_client.is_configured:
+    raise AppError("CONFIG_ERROR", "LLM not configured", {"missing": ["LLM_API_KEY"]}, http_status=400)
+
+  system_prompt = (
+    "You are a DSL repair agent for trading strategies. "
+    "Use the provided DSL, strategy text, and review findings to fix mismatches. "
+    "Keep the DSL schema unchanged and only modify fields necessary to align with the strategy text. "
+    "Return JSON with keys: spec (full corrected DSL spec) and changes (list of human-readable fix notes). "
+    "The changes list must be in the requested locale language."
+  )
+
+  user_prompt = (
+    "Locale: " + req.locale + "\n"
+    "Strategy text (target requirement):\n" + req.strategy_text + "\n\n"
+    "Review findings (structured + consistency + conclusion):\n" + json.dumps(req.review.model_dump(), ensure_ascii=False) + "\n\n"
+    "Current DSL JSON:\n" + json.dumps(req.dsl, ensure_ascii=False)
+  )
+
+  schema = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["spec", "changes"],
+    "properties": {
+      "spec": {"type": "object"},
+      "changes": {"type": "array", "items": {"type": "string"}},
+    },
+  }
+
+  data = await llm_client.chat_json(
+    system_prompt,
+    user_prompt,
+    schema_name="dsl_repair",
+    json_schema=schema,
+    strict_schema=True,
+  )
+
+  spec = data.get("spec") if isinstance(data, dict) else None
+  changes = data.get("changes") if isinstance(data, dict) else None
+  if not isinstance(spec, dict):
+    raise AppError("LLM_ERROR", "LLM returned invalid DSL spec", {"type": str(type(spec))})
+
+  return RepairResponse(
+    spec=spec,
+    changes=[str(x) for x in (changes if isinstance(changes, list) else [])],
+    source="llm",
+  )
 
 
 class StrategyListItem(BaseModel):

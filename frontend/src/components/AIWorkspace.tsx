@@ -17,12 +17,14 @@ interface AIWorkspaceProps {
   progress: number;
   artifacts: RunStatusResponse['artifacts'] | null;
   activeRunWindow: { startDate: string; endDate: string } | null;
+  extraSteps?: StepInfo[];
 }
 
-export default function AIWorkspace({ status, runId, steps, progress, artifacts, activeRunWindow }: AIWorkspaceProps) {
+export default function AIWorkspace({ status, runId, steps, progress, artifacts, activeRunWindow, extraSteps }: AIWorkspaceProps) {
   const { t } = useI18n();
 
-  const isIdle = status === 'idle';
+  const mergedSteps = extraSteps && extraSteps.length ? [...extraSteps, ...steps] : steps;
+  const isIdle = status === 'idle' && mergedSteps.length === 0;
 
   return (
     <div className="h-full flex flex-col bg-muted/30">
@@ -55,11 +57,11 @@ export default function AIWorkspace({ status, runId, steps, progress, artifacts,
           </div>
         ) : (
           <div className="space-y-3">
-            {steps.map((step, index) => (
+            {mergedSteps.map((step, index) => (
               <WorkspaceStepCard
                 key={step.key}
                 step={step}
-                isLast={index === steps.length - 1}
+                isLast={index === mergedSteps.length - 1}
                 progress={progress}
                 activeRunWindow={activeRunWindow}
               />
