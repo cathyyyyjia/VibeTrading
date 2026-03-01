@@ -53,6 +53,7 @@ export default function HistoryPanel({}: HistoryPanelProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [detailsByRunId, setDetailsByRunId] = useState<Record<string, Partial<HistoryEntry>>>({});
   const [metaByRunId, setMetaByRunId] = useState<Record<string, RunMeta>>({});
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<HistoryEntry | null>(null);
@@ -137,32 +138,56 @@ export default function HistoryPanel({}: HistoryPanelProps) {
     };
   };
 
+  const cacheKey = session?.user?.id ? `history:${session.user.id}` : null;
+
+  const fetchHistory = async () => {
+    if (!session?.access_token) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.getHistory();
+      setHistory(res.history);
+      if (cacheKey) {
+        localStorage.setItem(cacheKey, JSON.stringify(res.history));
+      }
+    } catch {
+      setError(t('history.loadFailed'));
+      // keep existing history instead of wiping
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!cacheKey) {
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw && history.length === 0) {
+        const cached = JSON.parse(raw);
+        if (Array.isArray(cached)) {
+          setHistory(cached);
+        }
+      }
+    } catch {
+      // ignore cache errors
+    }
+  }, [cacheKey, history.length]);
+
   useEffect(() => {
     let cancelled = false;
     if (!session?.access_token) {
-      setHistory([]);
       setLoading(false);
       return () => {
         cancelled = true;
       };
     }
-
     (async () => {
-      setLoading(true);
-      api
-        .getHistory()
-        .then((res) => {
-          if (cancelled) return;
-          setHistory(res.history);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setHistory([]);
-        })
-        .finally(() => {
-          if (cancelled) return;
-          setLoading(false);
-        });
+      if (!cancelled) await fetchHistory();
     })();
     return () => {
       cancelled = true;
@@ -283,8 +308,29 @@ export default function HistoryPanel({}: HistoryPanelProps) {
     );
   }
 
-  if (history.length === 0) {
-    return null;
+  if (history.length === 0 && !loading) {
+    return (
+      <div className="border-t border-border pt-8 mt-8">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-2 mb-4 hover:text-foreground/80 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+          <h2 className="text-sm font-semibold text-foreground">{t('history.title')}</h2>
+          <span className="text-xs text-muted-foreground ml-auto">0 {t('history.runs')}</span>
+        </button>
+        {error && (
+          <div className="text-xs text-red-500 mb-2">{error}</div>
+        )}
+        <button
+          type="button"
+          onClick={fetchHistory}
+          className="text-xs px-3 py-1.5 rounded bg-muted text-foreground hover:bg-muted/70"
+        >
+          {locale === "zh" ? "刷新历史" : "Refresh history"}
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -300,6 +346,16 @@ export default function HistoryPanel({}: HistoryPanelProps) {
         <h2 className="text-sm font-semibold text-foreground">{t('history.title')}</h2>
         <span className="text-xs text-muted-foreground ml-auto">{history.length} {t('history.runs')}</span>
       </button>
+      <div className="flex items-center gap-3 mb-3">
+        {error && <span className="text-xs text-red-500">{error}</span>}
+        <button
+          type="button"
+          onClick={fetchHistory}
+          className="text-xs px-3 py-1.5 rounded bg-muted text-foreground hover:bg-muted/70"
+        >
+          {locale === "zh" ? "刷新历史" : "Refresh history"}
+        </button>
+      </div>
 
       {/* Items */}
       {isOpen && (
